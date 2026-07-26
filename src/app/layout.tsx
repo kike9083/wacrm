@@ -4,6 +4,7 @@ import Script from "next/script";
 import { Toaster } from "sonner";
 import "./globals.css";
 import { ThemeProvider } from "@/hooks/use-theme";
+import { I18nProvider } from "@/components/i18n-provider";
 import { DEFAULT_THEME, STORAGE_KEY, THEME_IDS } from "@/lib/themes";
 
 const inter = Inter({
@@ -66,11 +67,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      data-theme={DEFAULT_THEME}
-      className={`${inter.variable} h-full antialiased`}
-    >
+      <html
+        lang="es"
+        data-theme={DEFAULT_THEME}
+        className={`${inter.variable} h-full antialiased`}
+      >
       <head>
         <Script
           id="theme-boot"
@@ -80,7 +81,9 @@ export default function RootLayout({
       </head>
       <body className="min-h-full bg-background text-foreground font-sans" suppressHydrationWarning>
         <ThemeProvider>
+          <I18nProvider>
           {children}
+          </I18nProvider>
           <Toaster
             theme="dark"
             position="top-right"

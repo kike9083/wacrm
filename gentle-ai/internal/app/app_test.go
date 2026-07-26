@@ -1,0 +1,801 @@
+package app
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gentleman-programming/gentle-ai/internal/backup"
+	"github.com/gentleman-programming/gentle-ai/internal/model"
+	"github.com/gentleman-programming/gentle-ai/internal/state"
+	"github.com/gentleman-programming/gentle-ai/internal/system"
+	"github.com/gentleman-programming/gentle-ai/internal/update"
+	"github.com/gentleman-programming/gentle-ai/internal/update/upgrade"
+)
+
+// TestListBackupsNewestFirst verifies that ListBackups returns manifests sorted
+// newest-first by CreatedAt timestamp, matching the spec "newest first" ordering.
+func TestListBackupsNewestFirst(t *testing.T) {
+	home := t.TempDir()
+	backupRoot := filepath.Join(home, ".gentle-ai", "backups")
+
+	older := backup.Manifest{
+		ID:        "older",
+		CreatedAt: time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC),
+		RootDir:   filepath.Join(backupRoot, "older"),
+		Entries:   []backup.ManifestEntry{},
+	}
+	newer := backup.Manifest{
+		ID:        "newer",
+		CreatedAt: time.Date(2026, 3, 22, 15, 4, 5, 0, time.UTC),
+		RootDir:   filepath.Join(backupRoot, "newer"),
+		Entries:   []backup.ManifestEntry{},
+	}
+
+	// Write older backup first.
+	for _, m := range []backup.Manifest{older, newer} {
+		dir := filepath.Join(backupRoot, m.ID)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := backup.WriteManifest(filepath.Join(dir, backup.ManifestFilename), m); err != nil {
+			t.Fatalf("WriteManifest: %v", err)
+		}
+	}
+
+	// Temporarily override home dir resolution for ListBackups.
+	origHomeDir := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHomeDir) })
+	os.Setenv("HOME", home)
+
+	manifests := ListBackups()
+
+	if len(manifests) != 2 {
+		t.Fatalf("ListBackups() returned %d manifests, want 2", len(manifests))
+	}
+
+	// Newest must be first.
+	if manifests[0].ID != "newer" {
+		t.Errorf("ListBackups()[0].ID = %q, want %q (newest first)", manifests[0].ID, "newer")
+	}
+	if manifests[1].ID != "older" {
+		t.Errorf("ListBackups()[1].ID = %q, want %q", manifests[1].ID, "older")
+	}
+}
+
+// TestListBackupsWithSourceMetadata verifies that ListBackups returns manifests
+// with Source metadata intact, so display labels can use the source field.
+func TestListBackupsWithSourceMetadata(t *testing.T) {
+	home := t.TempDir()
+	backupRoot := filepath.Join(home, ".gentle-ai", "backups")
+
+	m := backup.Manifest{
+		ID:          "test-with-source",
+		CreatedAt:   time.Now().UTC(),
+		RootDir:     filepath.Join(backupRoot, "test-with-source"),
+		Source:      backup.BackupSourceInstall,
+		Description: "pre-install snapshot",
+		Entries:     []backup.ManifestEntry{},
+	}
+
+	dir := filepath.Join(backupRoot, m.ID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := backup.WriteManifest(filepath.Join(dir, backup.ManifestFilename), m); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", home)
+
+	manifests := ListBackups()
+
+	if len(manifests) != 1 {
+		t.Fatalf("ListBackups() returned %d manifests, want 1", len(manifests))
+	}
+
+	got := manifests[0]
+	if got.Source != backup.BackupSourceInstall {
+		t.Errorf("Source = %q, want %q", got.Source, backup.BackupSourceInstall)
+	}
+	if got.Description != "pre-install snapshot" {
+		t.Errorf("Description = %q, want %q", got.Description, "pre-install snapshot")
+	}
+}
+
+// TestRunArgsRestoreListIsDispatched verifies that `gentle-ai restore --list`
+// is correctly dispatched through RunArgs and produces a meaningful response
+// (either a backup list or a "no backups" message — never "unknown command").
+func TestRunArgsRestoreListIsDispatched(t *testing.T) {
+	home := t.TempDir()
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", home)
+
+	var buf bytes.Buffer
+	err := RunArgs([]string{"restore", "--list"}, &buf)
+	if err != nil {
+		t.Fatalf("RunArgs(restore --list) error = %v", err)
+	}
+
+	out := buf.String()
+	if out == "" {
+		t.Fatalf("restore --list produced no output")
+	}
+
+	// Must not produce "unknown command".
+	if strings.Contains(out, "unknown command") {
+		t.Errorf("restore is not registered in RunArgs; got: %s", out)
+	}
+}
+
+// TestRunArgsRestoreByIDWithYes verifies end-to-end wiring of `restore <id> --yes`
+// through app.RunArgs.
+func TestRunArgsRestoreByIDWithYes(t *testing.T) {
+	home := t.TempDir()
+	backupRoot := filepath.Join(home, ".gentle-ai", "backups")
+
+	// Create a backup with a real file entry so restore can succeed.
+	sourceFile := filepath.Join(home, "config.md")
+	if err := os.WriteFile(sourceFile, []byte("original\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	snapshotDir := filepath.Join(backupRoot, "test-backup-001")
+	snapshotFile := filepath.Join(snapshotDir, "files", "config.md")
+	if err := os.MkdirAll(filepath.Dir(snapshotFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(snapshotFile, []byte("backup-content\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile snapshot: %v", err)
+	}
+
+	m := backup.Manifest{
+		ID:        "test-backup-001",
+		CreatedAt: time.Now().UTC(),
+		RootDir:   snapshotDir,
+		Source:    backup.BackupSourceInstall,
+		Entries: []backup.ManifestEntry{
+			{OriginalPath: sourceFile, SnapshotPath: snapshotFile, Existed: true, Mode: 0o644},
+		},
+	}
+	if err := backup.WriteManifest(filepath.Join(snapshotDir, backup.ManifestFilename), m); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", home)
+
+	var buf bytes.Buffer
+	err := RunArgs([]string{"restore", "test-backup-001", "--yes"}, &buf)
+	if err != nil {
+		t.Fatalf("RunArgs(restore test-backup-001 --yes) error = %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(strings.ToLower(out), "restor") {
+		t.Errorf("restore output should confirm restoration; got:\n%s", out)
+	}
+}
+
+// TestRunArgsRestoreUnknownIDReturnsError verifies that an unknown backup ID
+// is surfaced as an error from RunArgs.
+func TestRunArgsRestoreUnknownIDReturnsError(t *testing.T) {
+	home := t.TempDir()
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", home)
+
+	var buf bytes.Buffer
+	err := RunArgs([]string{"restore", "no-such-backup", "--yes"}, &buf)
+	if err == nil {
+		t.Fatalf("RunArgs(restore no-such-backup) expected error")
+	}
+	if strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("restore returned 'unknown command' — not dispatched: %v", err)
+	}
+}
+
+func TestRunArgsUninstallIsDispatched(t *testing.T) {
+	var buf bytes.Buffer
+	// uninstall without required flags prints usage help — that's enough to
+	// confirm the dispatch path works without needing real agents or state.
+	_ = RunArgs([]string{"uninstall"}, &buf)
+	// If we got here without panic, the dispatch to cli.RunUninstall works.
+}
+
+func TestRunArgsUninstallBypassesPlatformValidation(t *testing.T) {
+	origEnsure := ensureCurrentOSSupported
+	t.Cleanup(func() { ensureCurrentOSSupported = origEnsure })
+	ensureCurrentOSSupported = func() error {
+		return fmt.Errorf("unsupported platform")
+	}
+
+	var buf bytes.Buffer
+	// uninstall should NOT call ensureCurrentOSSupported — it runs before
+	// the platform check in the switch.
+	_ = RunArgs([]string{"uninstall"}, &buf)
+	// If we got here, uninstall bypassed the platform validation.
+}
+
+// TestListBackupsFallsBackGracefullyForOldManifests verifies that old manifests
+// without Source/Description are still returned (not skipped) and can be displayed
+// via DisplayLabel without panicking.
+func TestListBackupsFallsBackGracefullyForOldManifests(t *testing.T) {
+	_ = fmt.Sprintf // Ensure fmt is used.
+	home := t.TempDir()
+	backupRoot := filepath.Join(home, ".gentle-ai", "backups")
+
+	// Write a manifest with no Source/Description.
+	m := backup.Manifest{
+		ID:        "old-backup",
+		CreatedAt: time.Now().UTC(),
+		RootDir:   filepath.Join(backupRoot, "old-backup"),
+		Entries:   []backup.ManifestEntry{},
+		// Source and Description intentionally omitted — simulates old manifest.
+	}
+
+	dir := filepath.Join(backupRoot, m.ID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := backup.WriteManifest(filepath.Join(dir, backup.ManifestFilename), m); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	os.Setenv("HOME", home)
+
+	manifests := ListBackups()
+
+	if len(manifests) != 1 {
+		t.Fatalf("ListBackups() returned %d manifests, want 1", len(manifests))
+	}
+
+	// Must not panic — DisplayLabel should handle empty Source gracefully.
+	label := manifests[0].DisplayLabel()
+	if label == "" {
+		t.Errorf("DisplayLabel() returned empty string, want non-empty fallback label")
+	}
+}
+
+// ─── BUG 3: SyncOverrides.StrictTDD never read in tuiSync ───────────────────
+
+// TestTuiSyncAppliesStrictTDDOverride verifies that applyOverrides correctly
+// merges SyncOverrides.StrictTDD into the selection.
+// Previously, the field was declared on SyncOverrides but never applied.
+func TestTuiSyncAppliesStrictTDDOverride(t *testing.T) {
+	sel := boolPtr(true)
+	overrides := &model.SyncOverrides{StrictTDD: sel}
+
+	selection := model.Selection{StrictTDD: false}
+	applyOverrides(&selection, overrides)
+
+	if !selection.StrictTDD {
+		t.Fatalf("Selection.StrictTDD = false after applyOverrides with StrictTDD=true override; field is not being applied")
+	}
+}
+
+// TestTuiSyncAppliesStrictTDDOverrideFalse verifies the override correctly sets
+// StrictTDD to false when the pointer points to false.
+func TestTuiSyncAppliesStrictTDDOverrideFalse(t *testing.T) {
+	sel := boolPtr(false)
+	overrides := &model.SyncOverrides{StrictTDD: sel}
+
+	selection := model.Selection{StrictTDD: true}
+	applyOverrides(&selection, overrides)
+
+	if selection.StrictTDD {
+		t.Fatalf("Selection.StrictTDD = true after applyOverrides with StrictTDD=false override")
+	}
+}
+
+// TestTuiSyncStrictTDDNilOverrideNoChange verifies that when StrictTDD override
+// is nil, the selection's existing value is preserved.
+func TestTuiSyncStrictTDDNilOverrideNoChange(t *testing.T) {
+	overrides := &model.SyncOverrides{StrictTDD: nil}
+
+	selection := model.Selection{StrictTDD: true}
+	applyOverrides(&selection, overrides)
+
+	if !selection.StrictTDD {
+		t.Fatalf("Selection.StrictTDD changed unexpectedly; nil override should not modify the field")
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestTuiSyncTargetAgentsOverridePersistedInstallState(t *testing.T) {
+	home := t.TempDir()
+	if err := state.Write(home, state.InstallState{InstalledAgents: []string{string(model.AgentOpenCode)}}); err != nil {
+		t.Fatalf("state.Write: %v", err)
+	}
+
+	got := syncAgentIDs(home, &model.SyncOverrides{
+		TargetAgents: []model.AgentID{model.AgentClaudeCode, model.AgentClaudeCode, ""},
+	})
+
+	if len(got) != 1 || got[0] != model.AgentClaudeCode {
+		t.Fatalf("syncAgentIDs() = %v, want [%s]", got, model.AgentClaudeCode)
+	}
+}
+
+func TestTuiSyncTargetAgentsFallsBackToDiscoveredAgents(t *testing.T) {
+	home := t.TempDir()
+	if err := state.Write(home, state.InstallState{InstalledAgents: []string{string(model.AgentOpenCode)}}); err != nil {
+		t.Fatalf("state.Write: %v", err)
+	}
+
+	got := syncAgentIDs(home, nil)
+
+	if len(got) != 1 || got[0] != model.AgentOpenCode {
+		t.Fatalf("syncAgentIDs(nil) = %v, want [%s]", got, model.AgentOpenCode)
+	}
+}
+
+func TestTuiSyncClaudeModelConfigWritesSelectedAssignments(t *testing.T) {
+	home := t.TempDir()
+	if err := state.Write(home, state.InstallState{InstalledAgents: []string{string(model.AgentPi)}}); err != nil {
+		t.Fatalf("state.Write: %v", err)
+	}
+
+	assignments := map[string]model.ClaudeModelAlias{
+		"sdd-explore": model.ClaudeModelHaiku,
+		"sdd-propose": model.ClaudeModelHaiku,
+		"sdd-spec":    model.ClaudeModelHaiku,
+		"sdd-design":  model.ClaudeModelHaiku,
+		"sdd-tasks":   model.ClaudeModelHaiku,
+		"sdd-apply":   model.ClaudeModelHaiku,
+		"sdd-verify":  model.ClaudeModelHaiku,
+		"sdd-archive": model.ClaudeModelHaiku,
+		"default":     model.ClaudeModelHaiku,
+	}
+
+	changed, err := tuiSync(home)(&model.SyncOverrides{
+		TargetAgents:           []model.AgentID{model.AgentClaudeCode},
+		ClaudeModelAssignments: assignments,
+	})
+	if err != nil {
+		t.Fatalf("tuiSync Claude model config error: %v", err)
+	}
+	if changed == 0 {
+		t.Fatal("tuiSync Claude model config changed 0 files, want Claude assets written")
+	}
+
+	applyAgent := filepath.Join(home, ".claude", "agents", "sdd-apply.md")
+	body, err := os.ReadFile(applyAgent)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", applyAgent, err)
+	}
+	if !strings.Contains(string(body), "model: haiku") {
+		t.Fatalf("sdd-apply agent did not receive selected model; got:\n%s", body)
+	}
+
+	claudeMD := filepath.Join(home, ".claude", "CLAUDE.md")
+	body, err = os.ReadFile(claudeMD)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", claudeMD, err)
+	}
+	if strings.Contains(string(body), "| orchestrator |") {
+		t.Fatalf("CLAUDE.md should not expose orchestrator as a configurable model row; got:\n%s", body)
+	}
+	for _, want := range []string{
+		"| sdd-apply | haiku | Implementation |",
+		"| default | haiku | Non-SDD general delegation |",
+		"Gentle AI does not configure the main orchestrator model",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("CLAUDE.md missing %q; got:\n%s", want, body)
+		}
+	}
+}
+
+// TestApplyOverrides_KiroModelAssignments verifies that a non-nil KiroModelAssignments
+// override replaces the entire KiroModelAssignments map in the selection (same
+// replacement semantics as ClaudeModelAssignments — not a key-level merge).
+func TestApplyOverrides_KiroModelAssignments(t *testing.T) {
+	selection := model.Selection{
+		KiroModelAssignments: map[string]model.ClaudeModelAlias{"sdd-apply": model.ClaudeModelSonnet},
+	}
+	overrides := &model.SyncOverrides{
+		KiroModelAssignments: map[string]model.ClaudeModelAlias{"sdd-design": model.ClaudeModelOpus},
+	}
+
+	applyOverrides(&selection, overrides)
+
+	// The whole map is replaced — prior entries (sdd-apply) are gone.
+	if got := selection.KiroModelAssignments["sdd-design"]; got != model.ClaudeModelOpus {
+		t.Fatalf("KiroModelAssignments[sdd-design] = %q, want %q", got, model.ClaudeModelOpus)
+	}
+	if _, exists := selection.KiroModelAssignments["sdd-apply"]; exists {
+		t.Fatal("KiroModelAssignments[sdd-apply] should not exist after full-map replacement")
+	}
+}
+
+// ─── Persist model assignments (TUI path) ───────────────────────────────────
+
+// TestLoadPersistedAssignmentsPopulatesEmptySelection verifies that when
+// state.json has model assignments and the selection maps are empty, they
+// get populated from persisted state.
+func TestLoadPersistedAssignmentsPopulatesEmptySelection(t *testing.T) {
+	home := t.TempDir()
+
+	// Seed state with assignments including Kiro.
+	err := state.Write(home, state.InstallState{
+		InstalledAgents: []string{"opencode"},
+		ClaudeModelAssignments: map[string]string{
+			"orchestrator": "opus",
+			"sdd-apply":    "sonnet",
+		},
+		KiroModelAssignments: map[string]string{
+			"sdd-design":  "opus",
+			"sdd-archive": "haiku",
+		},
+		ModelAssignments: map[string]state.ModelAssignmentState{
+			"sdd-init": {ProviderID: "anthropic", ModelID: "claude-sonnet-4"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("state.Write: %v", err)
+	}
+
+	selection := model.Selection{}
+	loadPersistedAssignments(home, &selection)
+
+	if _, exists := selection.ClaudeModelAssignments["orchestrator"]; exists {
+		t.Errorf("ClaudeModelAssignments should not load persisted orchestrator model: %v", selection.ClaudeModelAssignments)
+	}
+	if got := selection.ClaudeModelAssignments["sdd-apply"]; got != "sonnet" {
+		t.Errorf("ClaudeModelAssignments[sdd-apply] = %q, want %q", got, "sonnet")
+	}
+	if got := selection.KiroModelAssignments["sdd-design"]; got != model.ClaudeModelOpus {
+		t.Errorf("KiroModelAssignments[sdd-design] = %q, want %q", got, model.ClaudeModelOpus)
+	}
+	if got := selection.KiroModelAssignments["sdd-archive"]; got != model.ClaudeModelHaiku {
+		t.Errorf("KiroModelAssignments[sdd-archive] = %q, want %q", got, model.ClaudeModelHaiku)
+	}
+	ma := selection.ModelAssignments["sdd-init"]
+	if ma.ProviderID != "anthropic" || ma.ModelID != "claude-sonnet-4" {
+		t.Errorf("ModelAssignments[sdd-init] = %+v, want anthropic/claude-sonnet-4", ma)
+	}
+}
+
+// TestLoadPersistedAssignmentsDoesNotOverrideExisting verifies that when the
+// selection already has assignments (e.g. from TUI overrides), persisted
+// state does NOT clobber them.
+func TestLoadPersistedAssignmentsDoesNotOverrideExisting(t *testing.T) {
+	home := t.TempDir()
+
+	// Seed state with "old" assignments.
+	err := state.Write(home, state.InstallState{
+		ClaudeModelAssignments: map[string]string{"sdd-apply": "haiku"},
+		ModelAssignments: map[string]state.ModelAssignmentState{
+			"sdd-init": {ProviderID: "google", ModelID: "gemini-pro"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("state.Write: %v", err)
+	}
+
+	// Selection already has assignments from the TUI configure flow.
+	selection := model.Selection{
+		ClaudeModelAssignments: map[string]model.ClaudeModelAlias{
+			"sdd-apply": "opus",
+		},
+		ModelAssignments: map[string]model.ModelAssignment{
+			"sdd-init": {ProviderID: "anthropic", ModelID: "claude-sonnet-4"},
+		},
+	}
+	loadPersistedAssignments(home, &selection)
+
+	// Existing values must be preserved, NOT overwritten.
+	if got := selection.ClaudeModelAssignments["sdd-apply"]; got != "opus" {
+		t.Errorf("ClaudeModelAssignments[sdd-apply] = %q, want %q (should not be overwritten)", got, "opus")
+	}
+	ma := selection.ModelAssignments["sdd-init"]
+	if ma.ProviderID != "anthropic" {
+		t.Errorf("ModelAssignments[sdd-init].ProviderID = %q, want %q (should not be overwritten)", ma.ProviderID, "anthropic")
+	}
+}
+
+// TestPersistAssignmentsPreservesInstalledAgents verifies the read-merge-write
+// pattern: persisting assignments must NOT lose the InstalledAgents list.
+func TestPersistAssignmentsPreservesInstalledAgents(t *testing.T) {
+	home := t.TempDir()
+
+	// Pre-existing state with agents.
+	err := state.Write(home, state.InstallState{
+		InstalledAgents: []string{"claude-code", "opencode"},
+	})
+	if err != nil {
+		t.Fatalf("state.Write: %v", err)
+	}
+
+	selection := model.Selection{
+		ClaudeModelAssignments: map[string]model.ClaudeModelAlias{
+			"orchestrator": "opus",
+			"sdd-apply":    "sonnet",
+		},
+	}
+	persistAssignments(home, selection)
+
+	// Read back and verify agents are still there.
+	got, err := state.Read(home)
+	if err != nil {
+		t.Fatalf("state.Read: %v", err)
+	}
+	if len(got.InstalledAgents) != 2 {
+		t.Fatalf("InstalledAgents = %v, want [claude-code opencode]", got.InstalledAgents)
+	}
+	if _, exists := got.ClaudeModelAssignments["orchestrator"]; exists {
+		t.Errorf("ClaudeModelAssignments should not persist orchestrator model: %v", got.ClaudeModelAssignments)
+	}
+	if got.ClaudeModelAssignments["sdd-apply"] != "sonnet" {
+		t.Errorf("ClaudeModelAssignments[sdd-apply] = %q, want %q", got.ClaudeModelAssignments["sdd-apply"], "sonnet")
+	}
+}
+
+// TestPersistAndLoadKiroModelAssignments verifies that KiroModelAssignments
+// survive a persist/load round-trip via state.json.
+func TestPersistAndLoadKiroModelAssignments(t *testing.T) {
+	home := t.TempDir()
+
+	selection := model.Selection{
+		KiroModelAssignments: map[string]model.ClaudeModelAlias{
+			"sdd-design":  model.ClaudeModelOpus,
+			"sdd-archive": model.ClaudeModelHaiku,
+			"default":     model.ClaudeModelSonnet,
+		},
+	}
+	persistAssignments(home, selection)
+
+	loaded := model.Selection{}
+	loadPersistedAssignments(home, &loaded)
+
+	if got := loaded.KiroModelAssignments["sdd-design"]; got != model.ClaudeModelOpus {
+		t.Errorf("round-trip KiroModelAssignments[sdd-design] = %q, want %q", got, model.ClaudeModelOpus)
+	}
+	if got := loaded.KiroModelAssignments["sdd-archive"]; got != model.ClaudeModelHaiku {
+		t.Errorf("round-trip KiroModelAssignments[sdd-archive] = %q, want %q", got, model.ClaudeModelHaiku)
+	}
+	if got := loaded.KiroModelAssignments["default"]; got != model.ClaudeModelSonnet {
+		t.Errorf("round-trip KiroModelAssignments[default] = %q, want %q", got, model.ClaudeModelSonnet)
+	}
+}
+
+// TestPersistAssignmentsNoOpWhenEmpty verifies that persistAssignments does
+// not write to state.json when the selection has no assignments.
+func TestPersistAssignmentsNoOpWhenEmpty(t *testing.T) {
+	home := t.TempDir()
+
+	// Write initial state.
+	err := state.Write(home, state.InstallState{
+		InstalledAgents: []string{"opencode"},
+	})
+	if err != nil {
+		t.Fatalf("state.Write: %v", err)
+	}
+
+	statePath := filepath.Join(home, ".gentle-ai", "state.json")
+	infoBefore, _ := os.Stat(statePath)
+
+	selection := model.Selection{} // empty assignments
+	persistAssignments(home, selection)
+
+	infoAfter, _ := os.Stat(statePath)
+	if infoAfter.ModTime() != infoBefore.ModTime() {
+		t.Errorf("persistAssignments() modified state.json when selection had no assignments")
+	}
+}
+
+// TestModelAssignmentsToStateWiresEffort verifies that modelAssignmentsToState
+// includes the Effort field in the serialisable output.
+func TestModelAssignmentsToStateWiresEffort(t *testing.T) {
+	input := map[string]model.ModelAssignment{
+		"sdd-apply": {ProviderID: "anthropic", ModelID: "claude-opus-4", Effort: "medium"},
+	}
+	got := modelAssignmentsToState(input)
+	s := got["sdd-apply"]
+	if s.Effort != "medium" {
+		t.Errorf("modelAssignmentsToState Effort = %q, want %q", s.Effort, "medium")
+	}
+}
+
+// TestLoadPersistedAssignmentsWiresEffort verifies that loadPersistedAssignments
+// populates the Effort field on the model.ModelAssignment when Effort is stored
+// in state.json.
+func TestLoadPersistedAssignmentsWiresEffort(t *testing.T) {
+	home := t.TempDir()
+
+	err := state.Write(home, state.InstallState{
+		ModelAssignments: map[string]state.ModelAssignmentState{
+			"sdd-apply": {ProviderID: "anthropic", ModelID: "claude-opus-4", Effort: "medium"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("state.Write: %v", err)
+	}
+
+	sel := model.Selection{}
+	loadPersistedAssignments(home, &sel)
+
+	a := sel.ModelAssignments["sdd-apply"]
+	if a.Effort != "medium" {
+		t.Errorf("loadPersistedAssignments Effort = %q, want %q", a.Effort, "medium")
+	}
+}
+
+// TestVersionBeforeSystemGuards verifies that `gentle-ai version` returns the
+// version string without going through system detection or platform guards.
+func TestVersionBeforeSystemGuards(t *testing.T) {
+	var buf bytes.Buffer
+	err := RunArgs([]string{"version"}, &buf)
+	if err != nil {
+		t.Fatalf("version should not fail: %v", err)
+	}
+	if !strings.Contains(buf.String(), "gentle-ai") {
+		t.Error("version output should contain 'gentle-ai'")
+	}
+}
+
+// TestHelpCommand verifies that help, --help, and -h all print USAGE and COMMANDS
+// without triggering system detection or platform guards.
+func TestHelpCommand(t *testing.T) {
+	for _, arg := range []string{"help", "--help", "-h"} {
+		t.Run(arg, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := RunArgs([]string{arg}, &buf)
+			if err != nil {
+				t.Fatalf("help should not fail: %v", err)
+			}
+			if !strings.Contains(buf.String(), "USAGE") {
+				t.Errorf("help output for %q should contain USAGE", arg)
+			}
+			if !strings.Contains(buf.String(), "COMMANDS") {
+				t.Errorf("help output for %q should contain COMMANDS", arg)
+			}
+		})
+	}
+}
+
+// TestUnknownCommandSuggestsHelp verifies that an unrecognised command returns
+// an error whose message suggests running 'gentle-ai help'.
+func TestUnknownCommandSuggestsHelp(t *testing.T) {
+	var buf bytes.Buffer
+	err := RunArgs([]string{"notacommand"}, &buf)
+	if err == nil {
+		t.Fatal("unknown command should return error")
+	}
+	if !strings.Contains(err.Error(), "gentle-ai help") {
+		t.Error("unknown command error should suggest 'gentle-ai help'")
+	}
+}
+
+func TestRunArgs_UpdateSkipsSelfUpdate(t *testing.T) {
+	origSelfUpdate := selfUpdateFn
+	origCheckAll := updateCheckAll
+	origDetect := detectSystem
+	origEnsure := ensureCurrentOSSupported
+	t.Cleanup(func() {
+		selfUpdateFn = origSelfUpdate
+		updateCheckAll = origCheckAll
+		detectSystem = origDetect
+		ensureCurrentOSSupported = origEnsure
+	})
+
+	ensureCurrentOSSupported = func() error { return nil }
+	detectSystem = func(context.Context) (system.DetectionResult, error) {
+		return system.DetectionResult{System: system.SystemInfo{Supported: true}}, nil
+	}
+
+	selfUpdateCalled := 0
+	selfUpdateFn = func(context.Context, string, system.PlatformProfile, io.Writer) error {
+		selfUpdateCalled++
+		return nil
+	}
+
+	updateCheckAll = func(context.Context, string, system.PlatformProfile) []update.UpdateResult {
+		return []update.UpdateResult{
+			{
+				Tool:             update.ToolInfo{Name: "gentle-ai"},
+				InstalledVersion: "1.0.0",
+				LatestVersion:    "1.0.0",
+				Status:           update.UpToDate,
+			},
+		}
+	}
+
+	var buf bytes.Buffer
+	err := RunArgs([]string{"update"}, &buf)
+	if err != nil {
+		t.Fatalf("RunArgs(update) error = %v", err)
+	}
+	if selfUpdateCalled != 0 {
+		t.Fatalf("selfUpdate should be skipped for explicit update flow; got %d call(s)", selfUpdateCalled)
+	}
+}
+
+func TestRunArgs_UpgradeSkipsSelfUpdate(t *testing.T) {
+	origSelfUpdate := selfUpdateFn
+	origCheckFiltered := updateCheckFiltered
+	origUpgradeExecute := upgradeExecute
+	origDetect := detectSystem
+	origEnsure := ensureCurrentOSSupported
+	t.Cleanup(func() {
+		selfUpdateFn = origSelfUpdate
+		updateCheckFiltered = origCheckFiltered
+		upgradeExecute = origUpgradeExecute
+		detectSystem = origDetect
+		ensureCurrentOSSupported = origEnsure
+	})
+
+	ensureCurrentOSSupported = func() error { return nil }
+	detectSystem = func(context.Context) (system.DetectionResult, error) {
+		return system.DetectionResult{System: system.SystemInfo{Supported: true}}, nil
+	}
+
+	selfUpdateCalled := 0
+	selfUpdateFn = func(context.Context, string, system.PlatformProfile, io.Writer) error {
+		selfUpdateCalled++
+		return nil
+	}
+
+	updateCheckFiltered = func(context.Context, string, system.PlatformProfile, []string) []update.UpdateResult {
+		return []update.UpdateResult{
+			{
+				Tool:             update.ToolInfo{Name: "gentle-ai", InstallMethod: update.InstallBinary},
+				InstalledVersion: "1.0.0",
+				LatestVersion:    "1.0.0",
+				Status:           update.UpToDate,
+			},
+		}
+	}
+
+	upgradeExecute = func(context.Context, []update.UpdateResult, system.PlatformProfile, string, bool, ...io.Writer) upgrade.UpgradeReport {
+		return upgrade.UpgradeReport{}
+	}
+
+	var buf bytes.Buffer
+	err := RunArgs([]string{"upgrade", "--dry-run"}, &buf)
+	if err != nil {
+		t.Fatalf("RunArgs(upgrade --dry-run) error = %v", err)
+	}
+	if selfUpdateCalled != 0 {
+		t.Fatalf("selfUpdate should be skipped for explicit upgrade flow; got %d call(s)", selfUpdateCalled)
+	}
+}
+
+func TestIsExplicitUpdateFlow(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "empty args", args: nil, want: false},
+		{name: "no command", args: []string{}, want: false},
+		{name: "update", args: []string{"update"}, want: true},
+		{name: "upgrade", args: []string{"upgrade"}, want: true},
+		{name: "version", args: []string{"version"}, want: false},
+		{name: "help", args: []string{"help"}, want: false},
+		{name: "install", args: []string{"install"}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isExplicitUpdateFlow(tt.args)
+			if got != tt.want {
+				t.Fatalf("isExplicitUpdateFlow(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}

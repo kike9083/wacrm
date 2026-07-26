@@ -1,0 +1,72 @@
+{
+  "auth": {
+    "welcomeBack": "Bienvenido de nuevo",
+    "signInToAccount": "Iniciá sesión en tu cuenta",
+    "email": "Email",
+    "password": "Contraseña",
+    "forgotPassword": "¿Olvidaste tu contraseña?",
+    "signIn": "Iniciar sesión",
+    "signingIn": "Ingresando...",
+    "noAccount": "¿No tenés cuenta?",
+    "createAccount": "Crear cuenta",
+    "createAccountTitle": "Crear cuenta",
+    "getStarted": "Creá tu cuenta para empezar",
+    "fullName": "Nombre completo",
+    "confirmPassword": "Confirmar contraseña",
+    "passwordsDoNotMatch": "Las contraseñas no coinciden",
+    "passwordMinLength": "La contraseña debe tener al menos 6 caracteres",
+    "creatingAccount": "Creando cuenta...",
+    "alreadyHaveAccount": "¿Ya tenés cuenta?",
+    "resetPassword": "Restablecer contraseña",
+    "resetPasswordDescription": "Ingresá tu email y te enviaremos un link para restablecerla",
+    "sendResetLink": "Enviar link",
+    "sending": "Enviando...",
+    "checkYourEmail": "Revisá tu email",
+    "resetLinkSent": "Te enviamos un link para restablecer tu contraseña a",
+    "backToSignIn": "Volver a iniciar sesión",
+    "networkError": "Error de conexión. Intentá de nuevo.",
+    "loginFailed": "Error al iniciar sesión",
+    "signupFailed": "Error al crear cuenta",
+    "recoveryFailed": "Error al solicitar recuperación",
+    "passwordPlaceholder": "Ingresá tu contraseña",
+    "emailPlaceholder": "ejemplo@correo.com",
+    "namePlaceholder": "Juan Pérez",
+    "confirmPasswordPlaceholder": "Repetí tu contraseña"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "inbox": "Bandeja",
+    "contacts": "Contactos",
+    "pipelines": "Pipeline",
+    "broadcasts": "Transmisiones",
+    "automations": "Automatizaciones",
+    "flows": "Flujos",
+    "settings": "Configuración",
+    "beta": "Beta",
+    "profile": "Perfil",
+    "signOut": "Cerrar sesión"
+  },
+  "header": {
+    "openMenu": "Abrir menú",
+    "openAccountMenu": "Abrir menú de cuenta"
+  },
+  "language": {
+    "select": "Idioma",
+    "es": "Español",
+    "en": "English"
+  },
+  "common": {
+    "loading": "Cargando...",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "close": "Cerrar",
+    "search": "Buscar",
+    "filter": "Filtrar",
+    "noResults": "Sin resultados",
+    "confirm": "Confirmar",
+    "back": "Volver",
+    "next": "Siguiente"
+  }
+}

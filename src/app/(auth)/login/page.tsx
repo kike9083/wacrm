@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useTranslation } from "react-i18next";
 import { client } from "@/lib/appwrite/client";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +19,7 @@ import {
 import { MessageSquare } from "lucide-react";
 
 export default function LoginPage() {
+  const { t } = useTranslation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +40,7 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error || "Login failed");
+        setError(data.error || t("auth.loginFailed"));
         setLoading(false);
         return;
       }
@@ -45,21 +48,24 @@ export default function LoginPage() {
       client.setSession(data.secret);
       router.push("/dashboard");
     } catch {
-      setError("Network error. Please try again.");
+      setError(t("auth.networkError"));
       setLoading(false);
     }
   };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
+      <div className="fixed right-4 top-4 z-50">
+        <LanguageSwitcher />
+      </div>
       <Card className="w-full max-w-md border-slate-800 bg-slate-900">
         <CardHeader className="items-center text-center">
           <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             <MessageSquare className="h-6 w-6 text-primary" />
           </div>
-          <CardTitle className="text-xl text-white">Welcome back</CardTitle>
+          <CardTitle className="text-xl text-white">{t("auth.welcomeBack")}</CardTitle>
           <CardDescription className="text-slate-400">
-            Sign in to your account
+            {t("auth.signInToAccount")}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -72,12 +78,12 @@ export default function LoginPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="email" className="text-slate-300">
-                Email
+                {t("auth.email")}
               </Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder={t("auth.emailPlaceholder")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -88,19 +94,19 @@ export default function LoginPage() {
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="password" className="text-slate-300">
-                  Password
+                  {t("auth.password")}
                 </Label>
                 <Link
                   href="/forgot-password"
                   className="text-sm text-primary hover:text-primary/80"
                 >
-                  Forgot password?
+                  {t("auth.forgotPassword")}
                 </Link>
               </div>
               <Input
                 id="password"
                 type="password"
-                placeholder="Enter your password"
+                placeholder={t("auth.passwordPlaceholder")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -113,17 +119,17 @@ export default function LoginPage() {
               disabled={loading}
               className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {loading ? "Signing in..." : "Sign in"}
+              {loading ? t("auth.signingIn") : t("auth.signIn")}
             </Button>
           </form>
 
           <p className="mt-6 text-center text-sm text-slate-400">
-            Don&apos;t have an account?{" "}
+            {t("auth.noAccount")}{" "}
             <Link
               href="/signup"
               className="text-primary hover:text-primary/80"
             >
-              Create account
+              {t("auth.createAccount")}
             </Link>
           </p>
         </CardContent>

@@ -1,10 +1,11 @@
 "use client";
-
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useTranslation } from "react-i18next";
 
 import { client } from "@/lib/appwrite/client";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +19,7 @@ import {
 import { MessageSquare } from "lucide-react";
 
 export default function SignupPage() {
+  const { t } = useTranslation();
   const router = useRouter();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -25,17 +27,18 @@ export default function SignupPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
     if (password !== confirmPassword) {
-      setError("Passwords do not match");
+      setError(t("auth.passwordsDoNotMatch"));
       return;
     }
 
     if (password.length < 6) {
-      setError("Password must be at least 6 characters");
+      setError(t("auth.passwordMinLength"));
       return;
     }
 
@@ -51,7 +54,7 @@ export default function SignupPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error || "Signup failed");
+        setError(data.error || t("auth.signupFailed"));
         setLoading(false);
         return;
       }
@@ -59,21 +62,24 @@ export default function SignupPage() {
       client.setSession(data.secret);
       router.push("/dashboard");
     } catch {
-      setError("Network error. Please try again.");
+      setError(t("auth.networkError"));
       setLoading(false);
     }
   };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
+      <div className="fixed right-4 top-4 z-50">
+        <LanguageSwitcher />
+      </div>
       <Card className="w-full max-w-md border-slate-800 bg-slate-900">
         <CardHeader className="items-center text-center">
           <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             <MessageSquare className="h-6 w-6 text-primary" />
           </div>
-          <CardTitle className="text-xl text-white">Create account</CardTitle>
+          <CardTitle className="text-xl text-white">{t("auth.createAccountTitle")}</CardTitle>
           <CardDescription className="text-slate-400">
-            Get started with CRM Template for WhatsApp
+            {t("auth.getStarted")}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -86,12 +92,12 @@ export default function SignupPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="fullName" className="text-slate-300">
-                Full name
+                {t("auth.fullName")}
               </Label>
               <Input
                 id="fullName"
                 type="text"
-                placeholder="John Doe"
+                placeholder={t("auth.namePlaceholder")}
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 required
@@ -101,12 +107,12 @@ export default function SignupPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="email" className="text-slate-300">
-                Email
+                {t("auth.email")}
               </Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder={t("auth.emailPlaceholder")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -116,12 +122,12 @@ export default function SignupPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="password" className="text-slate-300">
-                Password
+                {t("auth.password")}
               </Label>
               <Input
                 id="password"
                 type="password"
-                placeholder="At least 6 characters"
+                placeholder={t("auth.passwordPlaceholder")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -131,12 +137,12 @@ export default function SignupPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="confirmPassword" className="text-slate-300">
-                Confirm password
+                {t("auth.confirmPassword")}
               </Label>
               <Input
                 id="confirmPassword"
                 type="password"
-                placeholder="Repeat your password"
+                placeholder={t("auth.confirmPasswordPlaceholder")}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
@@ -149,17 +155,17 @@ export default function SignupPage() {
               disabled={loading}
               className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {loading ? "Creating account..." : "Create account"}
+              {loading ? t("auth.creatingAccount") : t("auth.createAccount")}
             </Button>
           </form>
 
           <p className="mt-6 text-center text-sm text-slate-400">
-            Already have an account?{" "}
+            {t("auth.alreadyHaveAccount")}{" "}
             <Link
               href="/login"
               className="text-primary hover:text-primary/80"
             >
-              Sign in
+              {t("auth.signIn")}
             </Link>
           </p>
         </CardContent>

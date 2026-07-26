@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/hooks/use-auth";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { LogOut, Menu, Settings as SettingsIcon, User } from "lucide-react";
 import {
   Avatar,
@@ -17,23 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-const pageTitles: Record<string, string> = {
-  "/dashboard": "Dashboard",
-  "/inbox": "Inbox",
-  "/contacts": "Contacts",
-  "/pipelines": "Pipelines",
-  "/broadcasts": "Broadcasts",
-  "/automations": "Automations",
-  "/settings": "Settings",
-};
 
-function getPageTitle(pathname: string): string {
-  if (pageTitles[pathname]) return pageTitles[pathname];
-  const match = Object.entries(pageTitles).find(([path]) =>
-    pathname.startsWith(path),
-  );
-  return match ? match[1] : "Dashboard";
-}
 
 interface HeaderProps {
   /** Wired to the shell's drawer state. Used only on mobile — the
@@ -41,10 +27,29 @@ interface HeaderProps {
   onOpenSidebar?: () => void;
 }
 
+const PAGE_TITLE_KEYS: Record<string, string> = {
+  "/dashboard": "nav.dashboard",
+  "/inbox": "nav.inbox",
+  "/contacts": "nav.contacts",
+  "/pipelines": "nav.pipelines",
+  "/broadcasts": "nav.broadcasts",
+  "/automations": "nav.automations",
+  "/settings": "nav.settings",
+};
+
+function getPageTitleKey(pathname: string): string {
+  if (PAGE_TITLE_KEYS[pathname]) return PAGE_TITLE_KEYS[pathname];
+  const match = Object.entries(PAGE_TITLE_KEYS).find(([path]) =>
+    pathname.startsWith(path),
+  );
+  return match ? match[1] : "nav.dashboard";
+}
+
 export function Header({ onOpenSidebar }: HeaderProps) {
+  const { t } = useTranslation();
   const pathname = usePathname();
   const { profile, signOut } = useAuth();
-  const title = getPageTitle(pathname);
+  const title = t(getPageTitleKey(pathname));
 
   const initial =
     profile?.full_name?.charAt(0)?.toUpperCase() ??
@@ -68,7 +73,9 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         </h1>
       </div>
 
-      <DropdownMenu>
+      <div className="flex items-center gap-1">
+        <LanguageSwitcher />
+        <DropdownMenu>
         <DropdownMenuTrigger
           className="flex items-center gap-2 rounded-md px-1 py-1 transition-colors hover:bg-slate-800/70 focus:bg-slate-800/70 focus:outline-none data-popup-open:bg-slate-800/70 sm:gap-3 sm:pl-1 sm:pr-3"
           aria-label="Open account menu"
@@ -111,7 +118,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
             }
           >
             <User className="size-4" />
-            Profile
+            {t("nav.profile")}
           </DropdownMenuItem>
           <DropdownMenuItem
             render={
@@ -122,7 +129,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
             }
           >
             <SettingsIcon className="size-4" />
-            Settings
+            {t("nav.settings")}
           </DropdownMenuItem>
           <DropdownMenuSeparator className="bg-slate-800" />
           <DropdownMenuItem
@@ -130,10 +137,11 @@ export function Header({ onOpenSidebar }: HeaderProps) {
             className="text-slate-200 focus:bg-slate-800 focus:text-white"
           >
             <LogOut className="size-4" />
-            Sign out
+            {t("nav.signOut")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      </div>
     </header>
   );
 }

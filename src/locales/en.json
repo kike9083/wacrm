@@ -1,0 +1,72 @@
+{
+  "auth": {
+    "welcomeBack": "Welcome back",
+    "signInToAccount": "Sign in to your account",
+    "email": "Email",
+    "password": "Password",
+    "forgotPassword": "Forgot password?",
+    "signIn": "Sign in",
+    "signingIn": "Signing in...",
+    "noAccount": "Don't have an account?",
+    "createAccount": "Create account",
+    "createAccountTitle": "Create account",
+    "getStarted": "Get started with your account",
+    "fullName": "Full name",
+    "confirmPassword": "Confirm password",
+    "passwordsDoNotMatch": "Passwords do not match",
+    "passwordMinLength": "Password must be at least 6 characters",
+    "creatingAccount": "Creating account...",
+    "alreadyHaveAccount": "Already have an account?",
+    "resetPassword": "Reset password",
+    "resetPasswordDescription": "Enter your email and we'll send you a reset link",
+    "sendResetLink": "Send reset link",
+    "sending": "Sending...",
+    "checkYourEmail": "Check your email",
+    "resetLinkSent": "We've sent a password reset link to",
+    "backToSignIn": "Back to sign in",
+    "networkError": "Network error. Please try again.",
+    "loginFailed": "Login failed",
+    "signupFailed": "Signup failed",
+    "recoveryFailed": "Recovery request failed",
+    "passwordPlaceholder": "Enter your password",
+    "emailPlaceholder": "you@example.com",
+    "namePlaceholder": "John Doe",
+    "confirmPasswordPlaceholder": "Repeat your password"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "inbox": "Inbox",
+    "contacts": "Contacts",
+    "pipelines": "Pipelines",
+    "broadcasts": "Broadcasts",
+    "automations": "Automations",
+    "flows": "Flows",
+    "settings": "Settings",
+    "beta": "Beta",
+    "profile": "Profile",
+    "signOut": "Sign out"
+  },
+  "header": {
+    "openMenu": "Open menu",
+    "openAccountMenu": "Open account menu"
+  },
+  "language": {
+    "select": "Language",
+    "es": "Español",
+    "en": "English"
+  },
+  "common": {
+    "loading": "Loading...",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "search": "Search",
+    "filter": "Filter",
+    "noResults": "No results",
+    "confirm": "Confirm",
+    "back": "Back",
+    "next": "Next"
+  }
+}
