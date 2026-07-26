@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient, createSessionClient } from '@/lib/appwrite/server';
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
 import { ID, Query } from 'node-appwrite';
-import { sendReactionMessage } from '@/lib/whatsapp/meta-api';
+import { createDriver, getDriverType } from '@/lib/whatsapp/driver';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils';
 import {
@@ -140,20 +140,22 @@ export async function POST(request: Request) {
     const accessToken = decrypt(config.access_token);
     const sanitizedPhone = sanitizePhoneForMeta(contact.phone);
 
+    const driverType = getDriverType()
+    const driver = driverType === 'evolution'
+      ? createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
+      : createDriver('meta', { phoneNumberId: config.phone_number_id, accessToken })
+
     try {
-      await sendReactionMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
-        to: sanitizedPhone,
+      await driver.sendReaction(sanitizedPhone, {
         targetMessageId: targetMessage.message_id,
         emoji,
       });
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : 'Unknown Meta API error';
-      console.error('[whatsapp/react] Meta send failed:', message);
+        err instanceof Error ? err.message : 'Unknown API error';
+      console.error('[whatsapp/react] Send failed:', message);
       return NextResponse.json(
-        { error: `Meta API error: ${message}` },
+        { error: `WhatsApp API error: ${message}` },
         { status: 502 },
       );
     }

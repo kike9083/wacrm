@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { Query } from 'node-appwrite'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { createDriver, getDriverType } from '@/lib/whatsapp/driver'
 import { decrypt } from '@/lib/whatsapp/encryption'
 
 export async function GET(
@@ -30,39 +30,41 @@ export async function GET(
       )
     }
 
-    // Fetch and decrypt WhatsApp config
-    const { databases } = createAdminClient()
-    let configs
-    try {
-      configs = await databases.listDocuments(
-        DATABASE_ID,
-        COLLECTIONS.whatsappConfig,
-        [Query.equal('user_id', user.$id)]
-      )
-    } catch {
-      return NextResponse.json(
-        { error: 'WhatsApp not configured' },
-        { status: 400 }
-      )
+    const driverType = getDriverType()
+    let driver
+
+    if (driverType === 'evolution') {
+      driver = createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
+    } else {
+      // Fetch and decrypt WhatsApp config for Meta
+      const { databases } = createAdminClient()
+      let configs
+      try {
+        configs = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.whatsappConfig,
+          [Query.equal('user_id', user.$id)]
+        )
+      } catch {
+        return NextResponse.json(
+          { error: 'WhatsApp not configured' },
+          { status: 400 }
+        )
+      }
+      const config = configs.documents[0]
+      if (!config) {
+        return NextResponse.json(
+          { error: 'WhatsApp not configured' },
+          { status: 400 }
+        )
+      }
+      const accessToken = decrypt(config.access_token)
+      driver = createDriver('meta', { phoneNumberId: config.phone_number_id, accessToken })
     }
-    const config = configs.documents[0]
-    if (!config) {
-      return NextResponse.json(
-        { error: 'WhatsApp not configured' },
-        { status: 400 }
-      )
-    }
 
-    const accessToken = decrypt(config.access_token)
-
-    // Get the download URL from Meta
-    const mediaInfo = await getMediaUrl({ mediaId, accessToken })
-
-    // Download the binary data
-    const { buffer, contentType } = await downloadMedia({
-      downloadUrl: mediaInfo.url,
-      accessToken,
-    })
+    // Get the download URL and download the binary data
+    const mediaInfo = await driver.getMediaUrl(mediaId)
+    const { buffer, contentType } = await driver.downloadMedia(mediaInfo.url)
 
     return new Response(new Uint8Array(buffer), {
       status: 200,

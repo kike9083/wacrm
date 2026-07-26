@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
-import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
+import { createDriver, getDriverType } from '@/lib/whatsapp/driver'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import {
   sanitizePhoneForMeta,
@@ -192,29 +192,25 @@ export async function POST(request: Request) {
       }
     }
 
-    // Send via Meta API — retry with phone-number variants
+    // Create driver (meta or evolution)
+    const driverType = getDriverType()
+    const driver = driverType === 'evolution'
+      ? createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
+      : createDriver('meta', { phoneNumberId: config.phone_number_id, accessToken })
+
+    // Send via driver — retry with phone-number variants
     let waMessageId = ''
     let workingPhone = sanitizedPhone
 
     const attempt = async (phone: string): Promise<string> => {
       if (message_type === 'template') {
-        const result = await sendTemplateMessage({
-          phoneNumberId: config.phone_number_id,
-          accessToken,
-          to: phone,
-          templateName: template_name,
+        const result = await driver.sendTemplate(phone, template_name, {
           params: template_params || [],
           contextMessageId,
         })
         return result.messageId
       }
-      const result = await sendTextMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
-        to: phone,
-        text: content_text,
-        contextMessageId,
-      })
+      const result = await driver.sendText(phone, content_text, { contextMessageId })
       return result.messageId
     }
 

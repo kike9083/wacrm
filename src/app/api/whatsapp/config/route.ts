@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
-import { verifyPhoneNumber } from '@/lib/whatsapp/meta-api'
+import { createDriver, getDriverType } from '@/lib/whatsapp/driver'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 
 /**
@@ -28,6 +28,25 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const driverType = getDriverType()
+
+    // Evolution driver: verify connection using env vars
+    if (driverType === 'evolution') {
+      try {
+        const driver = createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
+        const phoneInfo = await driver.verifyConnection()
+        return NextResponse.json({ connected: true, phone_info: phoneInfo })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown Evolution API error'
+        console.error('[whatsapp/config GET] Evolution API verification failed:', message)
+        return NextResponse.json(
+          { connected: false, reason: 'evolution_api_error', message },
+          { status: 200 }
+        )
+      }
+    }
+
+    // Meta driver: read config from DB
     const { databases } = createAdminClient()
     let configs
     try {
@@ -56,7 +75,6 @@ export async function GET() {
     }
 
     // Try to decrypt the stored token with the current ENCRYPTION_KEY.
-    // If this fails, the key changed (or was never consistent across envs).
     let accessToken: string
     try {
       accessToken = decrypt(config.access_token)
@@ -76,10 +94,8 @@ export async function GET() {
 
     // Validate credentials against Meta
     try {
-      const phoneInfo = await verifyPhoneNumber({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
-      })
+      const driver = createDriver('meta', { phoneNumberId: config.phone_number_id, accessToken })
+      const phoneInfo = await driver.verifyConnection()
       return NextResponse.json({ connected: true, phone_info: phoneInfo })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown Meta API error'
@@ -128,18 +144,17 @@ export async function POST(request: Request) {
       )
     }
 
-    // Verify credentials with Meta BEFORE saving
+    // Verify credentials BEFORE saving
     let phoneInfo
+    const driverType = getDriverType()
     try {
-      phoneInfo = await verifyPhoneNumber({
-        phoneNumberId: phone_number_id,
-        accessToken: access_token,
-      })
+      const driver = createDriver('meta', { phoneNumberId: phone_number_id, accessToken: access_token })
+      phoneInfo = await driver.verifyConnection()
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown Meta API error'
-      console.error('Meta API verification failed during save:', message)
+      const message = err instanceof Error ? err.message : 'Unknown API error'
+      console.error('API verification failed during save:', message)
       return NextResponse.json(
-        { error: `Meta API error: ${message}` },
+        { error: `API error: ${message}` },
         { status: 400 }
       )
     }

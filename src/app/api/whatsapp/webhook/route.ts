@@ -3,7 +3,8 @@ import { createAdminClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { createDriver, getDriverType } from '@/lib/whatsapp/driver'
+import type { WhatsAppDriver } from '@/lib/whatsapp/types'
 import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
@@ -228,11 +229,15 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
         const message = value.messages[i]
         const contact = value.contacts[i] || value.contacts[0]
 
+        const metaDriver = createDriver('meta', {
+          phoneNumberId: config.phone_number_id,
+          accessToken: decryptedAccessToken,
+        })
         await processMessage(
           message,
           contact,
           config.user_id,
-          decryptedAccessToken
+          metaDriver
         )
       }
     }
@@ -509,7 +514,7 @@ async function processMessage(
   message: WhatsAppMessage,
   contact: { profile: { name: string }; wa_id: string },
   userId: string,
-  accessToken: string
+  driver: WhatsAppDriver
 ) {
   const senderPhone = normalizePhone(message.from)
   const contactName = contact.profile.name
@@ -540,7 +545,7 @@ async function processMessage(
 
   // Parse message content based on type
   const { contentText, mediaUrl, mediaType, interactiveReplyId } =
-    await parseMessageContent(message, accessToken)
+    await parseMessageContent(message, driver)
 
   // Resolve swipe-reply context if present. A missing parent is fine —
   // we just store NULL and the UI renders the message without a quote.
@@ -724,7 +729,7 @@ async function processMessage(
 
 async function parseMessageContent(
   message: WhatsAppMessage,
-  accessToken: string
+  driver: WhatsAppDriver
 ): Promise<{
   contentText: string | null
   mediaUrl: string | null
@@ -738,19 +743,15 @@ async function parseMessageContent(
    */
   interactiveReplyId: string | null
 }> {
-  // getMediaUrl signature is (mediaId, accessToken) — earlier code had
-  // the args swapped, so every verification hit an invalid Meta URL and
-  // fell through to the catch block, leaving mediaUrl as null. That's
-  // why images showed up as empty bubbles in the inbox.
   const verifyAndBuildUrl = async (
     mediaId: string
   ): Promise<string | null> => {
     try {
-      await getMediaUrl({ mediaId, accessToken })
+      await driver.getMediaUrl(mediaId)
       return `/api/whatsapp/media/${mediaId}`
     } catch (error) {
       console.error(
-        `Failed to verify media ${mediaId} with Meta:`,
+        `Failed to verify media ${mediaId}:`,
         error instanceof Error ? error.message : error
       )
       return null

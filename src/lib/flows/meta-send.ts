@@ -1,10 +1,5 @@
-import {
-  sendInteractiveButtons,
-  sendInteractiveList,
-  sendTextMessage,
-  type InteractiveButton,
-  type InteractiveListSection,
-} from '@/lib/whatsapp/meta-api'
+import { createDriver, getDriverType } from '@/lib/whatsapp/driver'
+import type { InteractiveButton, InteractiveListSection } from '@/lib/whatsapp/types'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
   sanitizePhoneForMeta,
@@ -83,15 +78,13 @@ export async function engineSendText(
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const accessToken = decrypt((config as any).access_token)
+  const driverType = getDriverType()
+  const driver = driverType === 'evolution'
+    ? createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
+    : createDriver('meta', { phoneNumberId: (config as any).phone_number_id, accessToken: decrypt((config as any).access_token) })
 
   const attempt = async (phone: string): Promise<string> => {
-    const r = await sendTextMessage({
-      phoneNumberId: (config as any).phone_number_id,
-      accessToken,
-      to: phone,
-      text: args.text,
-    })
+    const r = await driver.sendText(phone, args.text)
     return r.messageId
   }
 
@@ -231,31 +224,28 @@ async function sendInteractiveViaMeta(
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const accessToken = decrypt((config as any).access_token)
+  const driverType = getDriverType()
+  const driver = driverType === 'evolution'
+    ? createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
+    : createDriver('meta', { phoneNumberId: (config as any).phone_number_id, accessToken: decrypt((config as any).access_token) })
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'buttons') {
-      const r = await sendInteractiveButtons({
-        phoneNumberId: (config as any).phone_number_id,
-        accessToken,
-        to: phone,
-        bodyText: input.bodyText,
-        buttons: input.buttons,
-        headerText: input.headerText,
-        footerText: input.footerText,
-      })
+      const r = await driver.sendInteractiveButtons(
+        phone,
+        input.bodyText,
+        input.buttons,
+        { headerText: input.headerText, footerText: input.footerText },
+      )
       return r.messageId
     }
-    const r = await sendInteractiveList({
-      phoneNumberId: (config as any).phone_number_id,
-      accessToken,
-      to: phone,
-      bodyText: input.bodyText,
-      buttonLabel: input.buttonLabel,
-      sections: input.sections,
-      headerText: input.headerText,
-      footerText: input.footerText,
-    })
+    const r = await driver.sendInteractiveList(
+      phone,
+      input.bodyText,
+      input.buttonLabel,
+      input.sections,
+      { headerText: input.headerText, footerText: input.footerText },
+    )
     return r.messageId
   }
 

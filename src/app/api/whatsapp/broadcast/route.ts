@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createSessionClient, createAdminClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { Query } from 'node-appwrite'
-import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
+import { createDriver, getDriverType } from '@/lib/whatsapp/driver'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
   sanitizePhoneForMeta,
@@ -122,6 +122,11 @@ export async function POST(request: Request) {
 
     const accessToken = decrypt(config.access_token)
 
+    const driverType = getDriverType()
+    const driver = driverType === 'evolution'
+      ? createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
+      : createDriver('meta', { phoneNumberId: config.phone_number_id, accessToken })
+
     const results: BroadcastResult[] = []
     let sentCount = 0
     let failedCount = 0
@@ -147,11 +152,7 @@ export async function POST(request: Request) {
 
       for (const variant of variants) {
         try {
-          const result = await sendTemplateMessage({
-            phoneNumberId: config.phone_number_id,
-            accessToken,
-            to: variant,
-            templateName: template_name,
+          const result = await driver.sendTemplate(variant, template_name, {
             language: template_language || 'en_US',
             params: recipient.params ?? [],
           })
