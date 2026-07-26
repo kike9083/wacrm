@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+import { ID, Query } from 'node-appwrite'
 import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { supabaseAdmin } from '@/lib/flows/admin-client'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -17,14 +18,11 @@ import {
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createClient()
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const { account } = await createSessionClient()
+    let user
+    try {
+      user = await account.get()
+    } catch {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -33,7 +31,7 @@ export async function POST(request: Request) {
 
     // Per-user rate limit. Bucket key is scoped to this route so
     // `/broadcast` has an independent budget.
-    const limit = checkRateLimit(`send:${user.id}`, RATE_LIMITS.send)
+    const limit = checkRateLimit(`send:${user.$id}`, RATE_LIMITS.send)
     if (!limit.success) {
       return rateLimitResponse(limit)
     }
@@ -70,22 +68,44 @@ export async function POST(request: Request) {
       )
     }
 
-    // Fetch conversation and contact
-    const { data: conversation, error: convError } = await supabase
-      .from('conversations')
-      .select('*, contact:contacts(*)')
-      .eq('id', conversation_id)
-      .eq('user_id', user.id)
-      .single()
+    const { databases } = createAdminClient()
 
-    if (convError || !conversation) {
+    // Fetch conversation
+    let conversation
+    try {
+      conversation = await databases.getDocument(
+        DATABASE_ID,
+        COLLECTIONS.conversations,
+        conversation_id,
+      )
+    } catch {
+      return NextResponse.json(
+        { error: 'Conversation not found' },
+        { status: 404 }
+      )
+    }
+    if (conversation.user_id !== user.$id) {
       return NextResponse.json(
         { error: 'Conversation not found' },
         { status: 404 }
       )
     }
 
-    const contact = conversation.contact
+    // Fetch contact
+    let contactList
+    try {
+      contactList = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.contacts,
+        [Query.equal('$id', conversation.contact_id)]
+      )
+    } catch {
+      return NextResponse.json(
+        { error: 'Contact phone number not found' },
+        { status: 400 }
+      )
+    }
+    const contact = contactList.documents[0]
     if (!contact?.phone) {
       return NextResponse.json(
         { error: 'Contact phone number not found' },
@@ -103,13 +123,21 @@ export async function POST(request: Request) {
     }
 
     // Fetch and decrypt WhatsApp config
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('user_id', user.id)
-      .single()
-
-    if (configError || !config) {
+    let configs
+    try {
+      configs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.whatsappConfig,
+        [Query.equal('user_id', user.$id)]
+      )
+    } catch {
+      return NextResponse.json(
+        { error: 'WhatsApp not configured. Please set up your WhatsApp integration first.' },
+        { status: 400 }
+      )
+    }
+    const config = configs.documents[0]
+    if (!config) {
       return NextResponse.json(
         { error: 'WhatsApp not configured. Please set up your WhatsApp integration first.' },
         { status: 400 }
@@ -118,49 +146,44 @@ export async function POST(request: Request) {
 
     const accessToken = decrypt(config.access_token)
 
-    // Self-heal legacy CBC-encrypted tokens. Fire-and-forget: we
-    // return from the send without waiting, so a failed upgrade just
-    // means the next send tries again. The upgrade is idempotent —
-    // concurrent sends both produce valid GCM ciphertexts of the same
-    // plaintext, last write wins.
+    // Self-heal legacy CBC-encrypted tokens. Fire-and-forget.
     if (isLegacyFormat(config.access_token)) {
-      void supabase
-        .from('whatsapp_config')
-        .update({ access_token: encrypt(accessToken) })
-        .eq('id', config.id)
-        .then(({ error }) => {
-          if (error) {
-            console.warn(
-              '[whatsapp/send] access_token GCM upgrade failed:',
-              error.message,
-            )
-          }
-        })
+      void databases.updateDocument(
+        DATABASE_ID,
+        COLLECTIONS.whatsappConfig,
+        config.$id,
+        { access_token: encrypt(accessToken) },
+      ).catch((error: Error) => {
+        console.warn(
+          '[whatsapp/send] access_token GCM upgrade failed:',
+          error.message,
+        )
+      })
     }
 
-    // Resolve the reply target (if any) to its Meta message_id, which is
-    // what `context.message_id` on the outgoing Meta payload needs. The
-    // parent must belong to this same conversation — otherwise a caller
-    // could quote messages they can't see by guessing UUIDs.
+    // Resolve the reply target (if any) to its Meta message_id
     let contextMessageId: string | undefined
     if (reply_to_message_id) {
-      const { data: parent, error: parentError } = await supabase
-        .from('messages')
-        .select('message_id, conversation_id')
-        .eq('id', reply_to_message_id)
-        .eq('conversation_id', conversation_id)
-        .maybeSingle()
-
-      if (parentError || !parent) {
+      let parent
+      try {
+        parent = await databases.getDocument(
+          DATABASE_ID,
+          COLLECTIONS.messages,
+          reply_to_message_id,
+        )
+      } catch {
+        return NextResponse.json(
+          { error: 'reply_to_message_id not found in this conversation' },
+          { status: 400 }
+        )
+      }
+      if (parent.conversation_id !== conversation_id) {
         return NextResponse.json(
           { error: 'reply_to_message_id not found in this conversation' },
           { status: 400 }
         )
       }
       if (!parent.message_id) {
-        // Parent never reached Meta (still in 'sending' or 'failed') — we
-        // can't quote it on WhatsApp. Send without context rather than
-        // dropping the message entirely.
         console.warn(
           '[whatsapp/send] reply target has no Meta message_id; sending without context'
         )
@@ -169,11 +192,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // Send via Meta API — retry with phone-number variants if Meta rejects
-    // with "recipient not in allowed list" (common in sandbox / when a
-    // number was registered with/without a trunk 0). If an alternate
-    // format succeeds, we persist it back to the contact row so the
-    // next send goes through on the first attempt.
+    // Send via Meta API — retry with phone-number variants
     let waMessageId = ''
     let workingPhone = sanitizedPhone
 
@@ -211,9 +230,6 @@ export async function POST(request: Request) {
           break
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
-          // Only retry when the failure is specifically that the
-          // recipient isn't in Meta's allowed list. Any other error
-          // (bad token, invalid template, etc.) bubbles up immediately.
           if (!isRecipientNotAllowedError(message)) {
             throw err
           }
@@ -232,80 +248,97 @@ export async function POST(request: Request) {
       )
     }
 
-    // If a non-original variant succeeded, update the contact so future
-    // sends go straight through. sanitizePhoneForMeta on workingPhone
-    // will yield workingPhone itself, so re-storing preserves it.
+    // If a non-original variant succeeded, update the contact
     if (workingPhone !== sanitizedPhone) {
       console.log(
         `[whatsapp/send] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`
       )
-      await supabase
-        .from('contacts')
-        .update({ phone: workingPhone })
-        .eq('id', contact.id)
+      try {
+        await databases.updateDocument(
+          DATABASE_ID,
+          COLLECTIONS.contacts,
+          contact.$id,
+          { phone: workingPhone }
+        )
+      } catch (err) {
+        console.error('[whatsapp/send] Failed to update contact phone:', err)
+      }
     }
 
-    // Insert message into DB — field names MUST match the messages schema
-    // (see supabase/migrations/001_initial_schema.sql):
-    //   conversation_id, sender_type, content_type, content_text,
-    //   media_url, template_name, message_id, status, created_at
-    const { data: messageRecord, error: msgError } = await supabase
-      .from('messages')
-      .insert({
-        conversation_id,
-        sender_type: 'agent',
-        content_type: message_type,
-        content_text: content_text || null,
-        media_url: media_url || null,
-        template_name: template_name || null,
-        message_id: waMessageId,
-        status: 'sent',
-        reply_to_message_id: reply_to_message_id || null,
-      })
-      .select()
-      .single()
-
-    if (msgError) {
-      console.error('Error inserting sent message:', msgError)
+    // Insert message into DB
+    let messageRecord
+    try {
+      messageRecord = await databases.createDocument(
+        DATABASE_ID,
+        COLLECTIONS.messages,
+        ID.unique(),
+        {
+          conversation_id,
+          sender_type: 'agent',
+          content_type: message_type,
+          content_text: content_text || null,
+          media_url: media_url || null,
+          template_name: template_name || null,
+          message_id: waMessageId,
+          status: 'sent',
+          reply_to_message_id: reply_to_message_id || null,
+        }
+      )
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      console.error('Error inserting sent message:', msg)
       return NextResponse.json(
-        { error: `Message sent to Meta but failed to save to DB: ${msgError.message}` },
+        { error: `Message sent to Meta but failed to save to DB: ${msg}` },
         { status: 500 }
       )
     }
 
     // Update conversation
-    await supabase
-      .from('conversations')
-      .update({
-        last_message_text: content_text || `[${message_type}]`,
-        last_message_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', conversation_id)
-
-    // Pause any active Flow run for this contact — the agent stepping
-    // in is the strongest "yield, human is here" signal. See PR #2
-    // plan for why we pause (not end): preserves diagnostic state +
-    // lets the agent or the 24h timeout sweep cleanly resolve the
-    // run later. For accounts with no active runs the UPDATE matches
-    // zero rows — cheap and harmless.
     try {
-      const { error: pauseErr } = await supabaseAdmin()
-        .from('flow_runs')
-        .update({
-          status: 'paused_by_agent',
-          ended_at: new Date().toISOString(),
-          end_reason: 'agent_replied',
+      await databases.updateDocument(
+        DATABASE_ID,
+        COLLECTIONS.conversations,
+        conversation_id,
+        {
+          last_message_text: content_text || `[${message_type}]`,
+          last_message_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }
+      )
+    } catch (err) {
+      console.error('[whatsapp/send] Failed to update conversation:', err)
+    }
+
+    // Pause any active Flow run for this contact
+    try {
+      let activeRuns
+      try {
+        activeRuns = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.flowRuns,
+          [
+            Query.equal('user_id', user.$id),
+            Query.equal('contact_id', contact.$id),
+            Query.equal('status', 'active'),
+          ]
+        )
+      } catch {
+        // Best-effort — no active runs or query failed
+        return
+      }
+      for (const run of activeRuns.documents) {
+        await databases.updateDocument(
+          DATABASE_ID,
+          COLLECTIONS.flowRuns,
+          run.$id,
+          {
+            status: 'paused_by_agent',
+            ended_at: new Date().toISOString(),
+            end_reason: 'agent_replied',
+          }
+        ).catch((err: Error) => {
+          console.error('[flows] pause-on-agent-send failed:', err.message)
         })
-        .eq('user_id', user.id)
-        .eq('contact_id', contact.id)
-        .eq('status', 'active')
-      if (pauseErr) {
-        // Best-effort — log + continue. The agent's message already
-        // landed at Meta; don't fail the response over a bookkeeping
-        // miss. Worst case: a stale active run gets caught by the
-        // stale-run cron sweep within 24h.
-        console.error('[flows] pause-on-agent-send failed:', pauseErr.message)
       }
     } catch (err) {
       console.error(
@@ -316,7 +349,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message_id: messageRecord.id,
+      message_id: messageRecord.$id,
       whatsapp_message_id: waMessageId,
     })
   } catch (error) {

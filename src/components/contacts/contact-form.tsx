@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { databases, account } from '@/lib/appwrite/client';
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
+import { Query } from 'appwrite';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import {
@@ -33,7 +35,6 @@ export function ContactForm({
   contactTags = [],
   onSaved,
 }: ContactFormProps) {
-  const supabase = createClient();
   const isEdit = !!contact;
 
   const [name, setName] = useState('');
@@ -59,11 +60,16 @@ export function ContactForm({
 
   async function fetchTags() {
     setLoadingTags(true);
-    const { data } = await supabase
-      .from('tags')
-      .select('*')
-      .order('name');
-    if (data) setTags(data);
+    try {
+      const { documents } = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.tags,
+        [Query.orderAsc('name')]
+      );
+      setTags(documents as unknown as Tag[]);
+    } catch {
+      setTags([]);
+    }
     setLoadingTags(false);
   }
 
@@ -86,58 +92,69 @@ export function ContactForm({
     setSaving(true);
 
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const user = session?.user;
+      let user;
+      try {
+        user = await account.get();
+      } catch {
+        throw new Error('Not authenticated');
+      }
       if (!user) throw new Error('Not authenticated');
 
       let contactId = contact?.id;
 
       if (isEdit && contactId) {
-        const { error } = await supabase
-          .from('contacts')
-          .update({
+        try {
+          await databases.updateDocument(DATABASE_ID, COLLECTIONS.contacts, contactId, {
             name: name.trim() || null,
             phone: phone.trim(),
             email: email.trim() || null,
             company: company.trim() || null,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', contactId);
-        if (error) throw error;
+          });
+        } catch (err) {
+          throw err;
+        }
       } else {
-        const { data, error } = await supabase
-          .from('contacts')
-          .insert({
-            user_id: user.id,
-            name: name.trim() || null,
-            phone: phone.trim(),
-            email: email.trim() || null,
-            company: company.trim() || null,
-          })
-          .select('id')
-          .single();
-        if (error) throw error;
-        contactId = data.id;
+        try {
+          const doc = await databases.createDocument(
+            DATABASE_ID,
+            COLLECTIONS.contacts,
+            'unique()',
+            {
+              user_id: user.$id,
+              name: name.trim() || null,
+              phone: phone.trim(),
+              email: email.trim() || null,
+              company: company.trim() || null,
+            }
+          );
+          contactId = doc.$id;
+        } catch (err) {
+          throw err;
+        }
       }
 
       // Sync tags
       if (contactId) {
-        await supabase
-          .from('contact_tags')
-          .delete()
-          .eq('contact_id', contactId);
+        const existingTags = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.contactTags,
+          [Query.equal('contact_id', contactId)]
+        );
+        await Promise.all(
+          existingTags.documents.map((t: any) =>
+            databases.deleteDocument(DATABASE_ID, COLLECTIONS.contactTags, t.$id)
+          )
+        );
 
         if (selectedTagIds.length > 0) {
-          const tagRows = selectedTagIds.map((tag_id) => ({
-            contact_id: contactId!,
-            tag_id,
-          }));
-          const { error: tagError } = await supabase
-            .from('contact_tags')
-            .insert(tagRows);
-          if (tagError) throw tagError;
+          await Promise.all(
+            selectedTagIds.map((tag_id) =>
+              databases.createDocument(DATABASE_ID, COLLECTIONS.contactTags, 'unique()', {
+                contact_id: contactId!,
+                tag_id,
+              })
+            )
+          );
         }
       }
 

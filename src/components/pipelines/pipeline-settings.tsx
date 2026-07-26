@@ -16,7 +16,9 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { createClient } from "@/lib/supabase/client";
+import { databases, account } from "@/lib/appwrite/client";
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
+import { Query } from "appwrite";
 import type { Pipeline, PipelineStage } from "@/types";
 import {
   Dialog,
@@ -68,8 +70,6 @@ export function PipelineSettings({
   onStagesChanged,
   onCreateNewPipeline,
 }: PipelineSettingsProps) {
-  const supabase = createClient();
-
   const [name, setName] = useState(pipeline.name);
   const [localStages, setLocalStages] = useState<PipelineStage[]>(stages);
   const [newStageName, setNewStageName] = useState("");
@@ -116,20 +116,26 @@ export function PipelineSettings({
       position: i,
     }));
 
-    const [renameRes, stagesRes] = await Promise.all([
-      supabase
-        .from("pipelines")
-        .update({ name: name.trim() })
-        .eq("id", pipeline.id),
-      supabase.from("pipeline_stages").upsert(stageRows, { onConflict: "id" }),
-    ]);
-
-    setSaving(false);
-
-    if (renameRes.error || stagesRes.error) {
+    try {
+      await Promise.all([
+        databases.updateDocument(DATABASE_ID, COLLECTIONS.pipelines, pipeline.id, {
+          name: name.trim(),
+        }),
+        ...stageRows.map((s) =>
+          databases.updateDocument(DATABASE_ID, COLLECTIONS.pipelineStages, s.id, {
+            name: s.name,
+            color: s.color,
+            position: s.position,
+          })
+        ),
+      ]);
+    } catch {
       toast.error("Failed to save pipeline");
+      setSaving(false);
       return;
     }
+
+    setSaving(false);
 
     onOpenChange(false);
     onPipelinesChanged();
@@ -140,40 +146,46 @@ export function PipelineSettings({
   async function handleAddStage() {
     const trimmed = newStageName.trim();
     if (!trimmed) return;
-    const { data, error } = await supabase
-      .from("pipeline_stages")
-      .insert({
-        pipeline_id: pipeline.id,
-        name: trimmed,
-        color: newStageColor,
-        position: localStages.length,
-      })
-      .select()
-      .single();
-    if (error || !data) {
+    let data;
+    try {
+      data = await databases.createDocument(
+        DATABASE_ID,
+        COLLECTIONS.pipelineStages,
+        "unique()",
+        {
+          pipeline_id: pipeline.id,
+          name: trimmed,
+          color: newStageColor,
+          position: localStages.length,
+        }
+      );
+    } catch {
       toast.error("Failed to add stage");
       return;
     }
-    setLocalStages([...localStages, data as PipelineStage]);
+    setLocalStages([...localStages, { ...data, id: data.$id } as unknown as PipelineStage]);
     setNewStageName("");
     setNewStageColor(STAGE_COLORS[(localStages.length + 1) % STAGE_COLORS.length]);
   }
 
   async function handleRemoveStage(stageId: string) {
     // Refuse to delete if deals still reference the stage (FK would fail).
-    const { count } = await supabase
-      .from("deals")
-      .select("id", { count: "exact", head: true })
-      .eq("stage_id", stageId);
-    if (count && count > 0) {
-      toast.error("Move or delete deals in this stage first");
-      return;
+    try {
+      const { total } = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.deals,
+        [Query.equal("stage_id", stageId), Query.limit(0)]
+      );
+      if (total > 0) {
+        toast.error("Move or delete deals in this stage first");
+        return;
+      }
+    } catch {
+      // no deals reference this stage
     }
-    const { error } = await supabase
-      .from("pipeline_stages")
-      .delete()
-      .eq("id", stageId);
-    if (error) {
+    try {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.pipelineStages, stageId);
+    } catch {
       toast.error("Failed to delete stage");
       return;
     }
@@ -182,16 +194,14 @@ export function PipelineSettings({
 
   async function handleDeletePipeline() {
     setDeleting(true);
-    // ON DELETE CASCADE handles deals + stages.
-    const { error } = await supabase
-      .from("pipelines")
-      .delete()
-      .eq("id", pipeline.id);
-    setDeleting(false);
-    if (error) {
+    try {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.pipelines, pipeline.id);
+    } catch {
+      setDeleting(false);
       toast.error("Failed to delete pipeline");
       return;
     }
+    setDeleting(false);
     onOpenChange(false);
     onPipelinesChanged();
     toast.success("Pipeline deleted");

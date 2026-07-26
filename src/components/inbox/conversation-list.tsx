@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { databases } from "@/lib/appwrite/client";
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
+import { Query } from "appwrite";
 import { cn } from "@/lib/utils";
-import type { Conversation, ConversationStatus } from "@/types";
+import type { Conversation, ConversationStatus, Contact } from "@/types";
 import { Search, ChevronDown } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Input } from "@/components/ui/input";
@@ -72,30 +74,49 @@ export function ConversationList({
   });
 
   useEffect(() => {
-    const supabase = createClient();
     let cancelled = false;
 
     (async () => {
-      const { data, error } = await supabase
-        .from("conversations")
-        .select("*, contact:contacts(*)")
-        .order("last_message_at", { ascending: false });
+      try {
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.conversations,
+          [Query.orderDesc("last_message_at")]
+        );
 
-      if (cancelled) return;
+        if (cancelled) return;
 
-      if (error) {
-        // Supabase errors have non-enumerable properties — log fields explicitly
-        console.error("Failed to fetch conversations:", {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        });
-        setLoading(false);
-        return;
+        const convs = response.documents.map((d: any) => ({
+          ...d,
+          id: d.$id,
+        })) as unknown as Conversation[];
+
+        // Fetch contacts for all conversations to populate the nested contact
+        const contactIds = convs
+          .map((c) => c.contact_id)
+          .filter(Boolean);
+        if (contactIds.length > 0) {
+          const contactRes = await databases.listDocuments(
+            DATABASE_ID,
+            COLLECTIONS.contacts,
+            [Query.equal("$id", contactIds)]
+          );
+          const contactsMap = new Map(
+            contactRes.documents.map((d: any) => [
+              d.$id,
+              { ...d, id: d.$id } as Contact,
+            ])
+          );
+          for (const conv of convs) {
+            (conv as any).contact =
+              contactsMap.get(conv.contact_id) ?? null;
+          }
+        }
+
+        onConversationsLoadedRef.current(convs);
+      } catch (err) {
+        console.error("Failed to fetch conversations:", err);
       }
-
-      onConversationsLoadedRef.current(data ?? []);
       setLoading(false);
     })();
 

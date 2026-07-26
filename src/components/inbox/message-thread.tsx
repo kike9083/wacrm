@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { databases, client } from "@/lib/appwrite/client";
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
+import { Query } from "appwrite";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import type {
@@ -174,24 +176,26 @@ export function MessageThread({
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
 
-  // Profiles are bounded by RLS to rows the current user is allowed to
-  // see — today that's just the current user, but the dropdown keeps the
-  // shape ready for shared-team workspaces without a refactor.
   useEffect(() => {
     let cancelled = false;
-    const supabase = createClient();
-    supabase
-      .from("profiles")
-      .select("*")
-      .order("full_name")
-      .then(({ data, error }) => {
+    (async () => {
+      try {
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.profiles,
+          [Query.orderAsc("full_name")]
+        );
         if (cancelled) return;
-        if (error) {
-          console.error("Failed to fetch profiles:", error);
-          return;
-        }
-        setProfiles((data as Profile[]) ?? []);
-      });
+        setProfiles(
+          response.documents.map((d: any) => ({
+            ...d,
+            id: d.$id,
+          })) as Profile[]
+        );
+      } catch (err) {
+        console.error("Failed to fetch profiles:", err);
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -239,33 +243,32 @@ export function MessageThread({
   const conversationId = conversation?.id;
   const hasUnread = (conversation?.unread_count ?? 0) > 0;
 
-  // Fetch messages whenever the selected conversation changes. Kept
-  // separate from the unread-reset effect so that incoming messages
-  // arriving while the thread is open don't trigger a full refetch —
-  // they only flip hasUnread, which only the reset effect listens to.
   useEffect(() => {
     if (!conversationId) return;
 
-    const supabase = createClient();
     let cancelled = false;
 
     (async () => {
       setLoading(true);
-
-      const { data, error } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("conversation_id", conversationId)
-        .order("created_at", { ascending: true });
-
-      if (cancelled) return;
-
-      if (error) {
-        console.error("Failed to fetch messages:", error);
-      } else {
-        onMessagesLoadedRef.current(data ?? []);
+      try {
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.messages,
+          [
+            Query.equal("conversation_id", conversationId),
+            Query.orderAsc("created_at"),
+          ]
+        );
+        if (cancelled) return;
+        onMessagesLoadedRef.current(
+          response.documents.map((d: any) => ({
+            ...d,
+            id: d.$id,
+          })) as unknown as Message[]
+        );
+      } catch (err) {
+        console.error("Failed to fetch messages:", err);
       }
-
       if (!cancelled) setLoading(false);
     })();
 
@@ -287,20 +290,25 @@ export function MessageThread({
       setReactions([]);
       return;
     }
-    const supabase = createClient();
     let cancelled = false;
 
     (async () => {
-      const { data, error } = await supabase
-        .from("message_reactions")
-        .select("*")
-        .eq("conversation_id", conversationId);
-      if (cancelled) return;
-      if (error) {
-        console.error("Failed to fetch reactions:", error);
-        return;
+      try {
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.messageReactions,
+          [Query.equal("conversation_id", conversationId)]
+        );
+        if (cancelled) return;
+        setReactions(
+          response.documents.map((d: any) => ({
+            ...d,
+            id: d.$id,
+          })) as MessageReaction[]
+        );
+      } catch (err) {
+        console.error("Failed to fetch reactions:", err);
       }
-      setReactions((data as MessageReaction[]) ?? []);
     })();
 
     return () => {
@@ -313,71 +321,54 @@ export function MessageThread({
   // conversation and avoids cross-conversation chatter on a busy inbox.
   useEffect(() => {
     if (!conversationId) return;
-    const supabase = createClient();
 
-    const channel = supabase
-      .channel(`reactions:${conversationId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "message_reactions",
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload) => {
-          const row = payload.new as MessageReaction;
-          setReactions((prev) => {
-            if (prev.some((r) => r.id === row.id)) return prev;
-            // Swap any matching optimistic temp row for the real one so
-            // the pill doesn't double up after a successful POST.
-            const tempIdx = prev.findIndex(
-              (r) =>
-                r.id.startsWith("temp-") &&
-                r.message_id === row.message_id &&
-                r.actor_type === row.actor_type &&
-                r.actor_id === row.actor_id,
-            );
-            if (tempIdx >= 0) {
-              const copy = prev.slice();
-              copy[tempIdx] = row;
-              return copy;
-            }
-            return [...prev, row];
-          });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "message_reactions",
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload) => {
-          const row = payload.new as MessageReaction;
-          setReactions((prev) => prev.map((r) => (r.id === row.id ? row : r)));
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "DELETE",
-          schema: "public",
-          table: "message_reactions",
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload) => {
-          const old = payload.old as Partial<MessageReaction>;
-          if (!old?.id) return;
-          setReactions((prev) => prev.filter((r) => r.id !== old.id));
-        },
-      )
-      .subscribe();
+    const channel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.messageReactions}.documents`;
+
+    const unsubscribe = client.subscribe(channel, (response) => {
+      const events = response.events as string[];
+      const payload = response.payload as Record<string, unknown> | undefined;
+      if (!payload) return;
+
+      // Appwrite channels are collection-wide, so we filter by
+      // conversation_id to scope events to the visible conversation.
+      if ((payload as any).conversation_id !== conversationId) return;
+
+      const isCreate = events.some((e) => e.endsWith(".create"));
+      const isUpdate = events.some((e) => e.endsWith(".update"));
+      const isDelete = events.some((e) => e.endsWith(".delete"));
+
+      if (isCreate) {
+        const row = { ...payload, id: payload.$id } as unknown as MessageReaction;
+        setReactions((prev) => {
+          if (prev.some((r) => r.id === row.id)) return prev;
+          const tempIdx = prev.findIndex(
+            (r) =>
+              r.id.startsWith("temp-") &&
+              r.message_id === row.message_id &&
+              r.actor_type === row.actor_type &&
+              r.actor_id === row.actor_id,
+          );
+          if (tempIdx >= 0) {
+            const copy = prev.slice();
+            copy[tempIdx] = row;
+            return copy;
+          }
+          return [...prev, row];
+        });
+      } else if (isUpdate) {
+        const row = { ...payload, id: payload.$id } as unknown as MessageReaction;
+        setReactions((prev) =>
+          prev.map((r) => (r.id === row.id ? row : r))
+        );
+      } else if (isDelete) {
+        const id = payload.$id as string;
+        if (!id) return;
+        setReactions((prev) => prev.filter((r) => r.id !== id));
+      }
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribe();
     };
   }, [conversationId]);
 
@@ -398,14 +389,14 @@ export function MessageThread({
   // is 0 the condition is false, so no further UPDATE is issued.
   useEffect(() => {
     if (!conversationId || !hasUnread) return;
-    const supabase = createClient();
-    supabase
-      .from("conversations")
-      .update({ unread_count: 0 })
-      .eq("id", conversationId)
-      .then(({ error }) => {
-        if (error) console.error("Failed to reset unread_count:", error);
-      });
+    databases
+      .updateDocument(
+        DATABASE_ID,
+        COLLECTIONS.conversations,
+        conversationId,
+        { unread_count: 0 }
+      )
+      .catch((err) => console.error("Failed to reset unread_count:", err));
   }, [conversationId, hasUnread]);
 
   // Auto-scroll to bottom on new messages
@@ -477,11 +468,12 @@ export function MessageThread({
     async (status: ConversationStatus) => {
       if (!conversation) return;
 
-      const supabase = createClient();
-      await supabase
-        .from("conversations")
-        .update({ status })
-        .eq("id", conversation.id);
+      await databases.updateDocument(
+        DATABASE_ID,
+        COLLECTIONS.conversations,
+        conversation.id,
+        { status }
+      );
 
       onStatusChange(conversation.id, status);
     },
@@ -656,21 +648,20 @@ export function MessageThread({
     async (agentId: string | null) => {
       if (!conversation) return;
 
-      const supabase = createClient();
-      const { error } = await supabase
-        .from("conversations")
-        .update({ assigned_agent_id: agentId })
-        .eq("id", conversation.id);
-
-      if (error) {
-        console.error("Failed to update assignment:", error);
+      try {
+        await databases.updateDocument(
+          DATABASE_ID,
+          COLLECTIONS.conversations,
+          conversation.id,
+          { assigned_agent_id: agentId }
+        );
+        onAssignChange(conversation.id, agentId);
+      } catch (err) {
+        console.error("Failed to update assignment:", err);
         toast.error("Failed to update assignment");
-        return;
       }
-
-      onAssignChange(conversation.id, agentId);
     },
-    [conversation, onAssignChange],
+    [conversation, onAssignChange]
   );
 
   // Empty state — same WhatsApp-style doodle background as the active

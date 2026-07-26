@@ -2,7 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { databases, account } from '@/lib/appwrite/client';
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
+import { Query } from 'appwrite';
 import { toast } from 'sonner';
 import { MessageTemplate } from '@/types';
 import { Step1ChooseTemplate } from '@/components/broadcasts/step1-choose-template';
@@ -81,18 +83,21 @@ export default function NewBroadcastPage() {
       toast.error('Give the broadcast a name before saving a draft.');
       return;
     }
-    const supabase = createClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
-    if (!user) {
+    let currentUser;
+    try {
+      currentUser = await account.get();
+    } catch {
+      toast.error('Not signed in.');
+      return;
+    }
+    if (!currentUser) {
       toast.error('Not signed in.');
       return;
     }
 
-    const { error } = await supabase.from('broadcasts').insert({
-      user_id: user.id,
+    try {
+      await databases.createDocument(DATABASE_ID, COLLECTIONS.broadcasts, 'unique()', {
+        user_id: currentUser.$id,
       name: name.trim(),
       template_name: template.name,
       template_language: template.language ?? 'en_US',
@@ -109,12 +114,11 @@ export default function NewBroadcastPage() {
       replied_count: 0,
       failed_count: 0,
     });
-
-    if (error) {
-      toast.error(`Failed to save draft: ${error.message}`);
+      toast.success('Draft saved');
+    } catch (err: any) {
+      toast.error(`Failed to save draft: ${err.message}`);
       return;
     }
-    toast.success('Draft saved');
     router.push('/broadcasts');
   }
 

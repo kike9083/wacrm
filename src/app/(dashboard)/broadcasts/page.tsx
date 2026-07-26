@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { databases } from '@/lib/appwrite/client';
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
+import { Query } from 'appwrite';
 import { Broadcast } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,7 +20,7 @@ import { getBroadcastStatus } from '@/lib/broadcast-status';
 
 /**
  * Poll cadence while any broadcast is sending. Kept modest so we don't
- * beat on Supabase — the aggregate trigger in migration 003 keeps
+ * beat on Appwrite — the aggregate trigger keeps
  * counts consistent; we just need to surface the freshest snapshot.
  */
 const POLL_INTERVAL_MS = 5_000;
@@ -65,14 +67,12 @@ export default function BroadcastsPage() {
 
   async function fetchBroadcasts() {
     try {
-      const supabase = createClient();
-      const { data, error: fetchError } = await supabase
-        .from('broadcasts')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (fetchError) throw fetchError;
-      setBroadcasts(data ?? []);
+      const { documents } = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.broadcasts,
+        [Query.orderDesc('created_at')],
+      );
+      setBroadcasts(documents as unknown as Broadcast[]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load broadcasts');
     } finally {

@@ -14,7 +14,9 @@ import {
   AlertTriangle,
   RotateCcw,
 } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
+import { databases } from '@/lib/appwrite/client';
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
+import { Query } from 'appwrite';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,7 +37,6 @@ type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
 
 export function WhatsAppConfig() {
-  const supabase = createClient();
   const { user, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
@@ -62,15 +63,17 @@ export function WhatsAppConfig() {
   const fetchConfig = useCallback(async (userId: string) => {
     setLoading(true);
     try {
-      // Load form values from Supabase (shows what's in DB)
-      const { data, error } = await supabase
-        .from('whatsapp_config')
-        .select('*')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (error) {
-        console.error('Failed to load config row:', error);
+      // Load form values from Appwrite (shows what's in DB)
+      let data: WhatsAppConfigType | null = null;
+      try {
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.whatsappConfig,
+          [Query.equal('user_id', userId), Query.limit(1)]
+        );
+        data = (response.documents[0] as unknown as WhatsAppConfigType) ?? null;
+      } catch (err) {
+        console.error('Failed to load config row:', err);
       }
 
       if (data) {
@@ -119,7 +122,7 @@ export function WhatsAppConfig() {
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     if (authLoading) return;

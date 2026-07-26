@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createSessionClient, createAdminClient } from '@/lib/appwrite/server'
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+import { Query } from 'node-appwrite'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
@@ -50,21 +52,15 @@ interface NewRecipient {
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createClient()
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const { account } = await createSessionClient()
+    let user
+    try {
+      user = await account.get()
+    } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Per-user broadcast budget. Note: this limits how often a user
-    // can *start* a campaign, not how many messages go out inside
-    // one — the fan-out loop below runs without additional gating.
-    const limit = checkRateLimit(`broadcast:${user.id}`, RATE_LIMITS.broadcast)
+    const limit = checkRateLimit(`broadcast:${user.$id}`, RATE_LIMITS.broadcast)
     if (!limit.success) {
       return rateLimitResponse(limit)
     }
@@ -78,7 +74,6 @@ export async function POST(request: Request) {
       template_params,
     } = body
 
-    // Normalize to a list of {phone, params} regardless of shape.
     let recipients: NewRecipient[]
     if (Array.isArray(newRecipients) && newRecipients.length > 0) {
       recipients = newRecipients
@@ -107,13 +102,15 @@ export async function POST(request: Request) {
       )
     }
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('user_id', user.id)
-      .single()
+    const { databases } = createAdminClient()
+    const configs = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTIONS.whatsappConfig,
+      [Query.equal('user_id', user.$id)],
+    )
+    const config = configs.documents[0]
 
-    if (configError || !config) {
+    if (!config) {
       return NextResponse.json(
         {
           error:

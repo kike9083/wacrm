@@ -1,19 +1,12 @@
-import { supabaseAdmin } from './admin-client'
-
-// ------------------------------------------------------------
-// Builder payload → flat rows for automation_steps.
-// Root steps arrive in order. A Condition step carries its children
-// under `branches: { yes: [...], no: [...] }`. We walk the tree and
-// assign stable UUIDs so parent_step_id references resolve in a
-// single INSERT.
-// ------------------------------------------------------------
+import { createAdminClient } from '@/lib/appwrite/server'
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+import { Query } from 'node-appwrite'
 
 export interface BuilderStepInput {
   id?: string
   step_type: string
   step_config: Record<string, unknown>
   branches?: { yes?: BuilderStepInput[]; no?: BuilderStepInput[] }
-  // Legacy flat form (from template seeds):
   branch?: 'yes' | 'no' | null
   parent_index?: number | null
 }
@@ -37,12 +30,19 @@ export async function replaceSteps(
   automationId: string,
   input: BuilderStepInput[],
 ): Promise<string | null> {
-  const admin = supabaseAdmin()
-  const { error: delErr } = await admin
-    .from('automation_steps')
-    .delete()
-    .eq('automation_id', automationId)
-  if (delErr) return delErr.message
+  const { databases } = createAdminClient()
+  try {
+    const { documents } = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTIONS.automationSteps,
+      [Query.equal('automation_id', automationId)]
+    )
+    for (const doc of documents) {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.automationSteps, doc.$id)
+    }
+  } catch (err) {
+    return err instanceof Error ? err.message : 'delete failed'
+  }
   return insertSteps(automationId, input)
 }
 
@@ -83,8 +83,20 @@ export async function insertSteps(
   walk(tree, null, null)
 
   if (rows.length === 0) return null
-  const { error } = await supabaseAdmin().from('automation_steps').insert(rows)
-  return error?.message ?? null
+  const { databases } = createAdminClient()
+  try {
+    for (const row of rows) {
+      await databases.createDocument(
+        DATABASE_ID,
+        COLLECTIONS.automationSteps,
+        row.id,
+        row
+      )
+    }
+    return null
+  } catch (err) {
+    return err instanceof Error ? err.message : 'insert failed'
+  }
 }
 
 function seedsToTree(seeds: BuilderStepInput[]): BuilderStepInput[] {
@@ -107,10 +119,6 @@ function seedsToTree(seeds: BuilderStepInput[]): BuilderStepInput[] {
   return roots
 }
 
-/**
- * Load the steps for an automation and rebuild the nested tree shape
- * the builder UI expects. One query, O(n) assembly.
- */
 export interface BuilderStepNode extends BuilderStepInput {
   id: string
   branches: { yes: BuilderStepNode[]; no: BuilderStepNode[] }
@@ -126,14 +134,13 @@ interface DbStep {
 }
 
 export async function loadStepsTree(automationId: string): Promise<BuilderStepNode[]> {
-  const { data, error } = await supabaseAdmin()
-    .from('automation_steps')
-    .select('*')
-    .eq('automation_id', automationId)
-    .order('position', { ascending: true })
-
-  if (error) throw new Error(error.message)
-  const rows = (data ?? []) as DbStep[]
+  const { databases } = createAdminClient()
+  const { documents } = await databases.listDocuments(
+    DATABASE_ID,
+    COLLECTIONS.automationSteps,
+    [Query.equal('automation_id', automationId), Query.orderAsc('position')]
+  )
+  const rows = documents as unknown as DbStep[]
 
   const byId = new Map<string, BuilderStepNode>()
   for (const row of rows) {

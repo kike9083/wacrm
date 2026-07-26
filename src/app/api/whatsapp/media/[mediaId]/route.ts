@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+import { Query } from 'node-appwrite'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
 
@@ -17,14 +19,11 @@ export async function GET(
       )
     }
 
-    const supabase = await createClient()
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const { account } = await createSessionClient()
+    let user
+    try {
+      user = await account.get()
+    } catch {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -32,13 +31,22 @@ export async function GET(
     }
 
     // Fetch and decrypt WhatsApp config
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('user_id', user.id)
-      .single()
-
-    if (configError || !config) {
+    const { databases } = createAdminClient()
+    let configs
+    try {
+      configs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.whatsappConfig,
+        [Query.equal('user_id', user.$id)]
+      )
+    } catch {
+      return NextResponse.json(
+        { error: 'WhatsApp not configured' },
+        { status: 400 }
+      )
+    }
+    const config = configs.documents[0]
+    if (!config) {
       return NextResponse.json(
         { error: 'WhatsApp not configured' },
         { status: 400 }

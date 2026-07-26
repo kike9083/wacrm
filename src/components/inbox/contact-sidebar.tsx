@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { databases, account } from "@/lib/appwrite/client";
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
+import { Query } from "appwrite";
 import { cn } from "@/lib/utils";
-import type { Contact, Deal, ContactNote, Tag } from "@/types";
+import type { Contact, Deal, ContactNote, Tag, PipelineStage } from "@/types";
 import {
   Phone,
   Mail,
@@ -34,36 +36,85 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const fetchContactData = useCallback(async () => {
     if (!contact) return;
 
-    const supabase = createClient();
-
     // Fetch deals, notes, and tags in parallel
-    const [dealsRes, notesRes, tagsRes] = await Promise.all([
-      supabase
-        .from("deals")
-        .select("*, stage:pipeline_stages(*)")
-        .eq("contact_id", contact.id)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("contact_notes")
-        .select("*")
-        .eq("contact_id", contact.id)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("contact_tags")
-        .select("id, tag_id, tags(*)")
-        .eq("contact_id", contact.id),
+    const [dealsRes, notesRes, contactTagsRes] = await Promise.all([
+      databases.listDocuments(DATABASE_ID, COLLECTIONS.deals, [
+        Query.equal("contact_id", contact.id),
+        Query.orderDesc("created_at"),
+      ]),
+      databases.listDocuments(DATABASE_ID, COLLECTIONS.contactNotes, [
+        Query.equal("contact_id", contact.id),
+        Query.orderDesc("created_at"),
+      ]),
+      databases.listDocuments(DATABASE_ID, COLLECTIONS.contactTags, [
+        Query.equal("contact_id", contact.id),
+      ]),
     ]);
 
-    if (dealsRes.data) setDeals(dealsRes.data);
-    if (notesRes.data) setNotes(notesRes.data);
-    if (tagsRes.data) {
-      const mapped = tagsRes.data
-        .filter((ct: Record<string, unknown>) => ct.tags)
-        .map((ct: Record<string, unknown>) => ({
-          ...(ct.tags as Tag),
-          contact_tag_id: ct.id as string,
-        }));
-      setTags(mapped);
+    const dealsData = dealsRes.documents.map((d: any) => ({
+      ...d,
+      id: d.$id,
+    })) as Deal[];
+    setDeals(dealsData);
+
+    setNotes(
+      notesRes.documents.map((d: any) => ({
+        ...d,
+        id: d.$id,
+      })) as ContactNote[]
+    );
+
+    // Fetch linked tags
+    if (contactTagsRes.documents.length > 0) {
+      const tagIds = contactTagsRes.documents
+        .map((ct: any) => ct.tag_id)
+        .filter(Boolean);
+      const uniqueTagIds = [...new Set(tagIds)];
+      if (uniqueTagIds.length > 0) {
+        const tagsRes = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.tags,
+          [Query.equal("$id", uniqueTagIds)]
+        );
+        const tagsMap = new Map(
+          tagsRes.documents.map((t: any) => [
+            t.$id,
+            { ...t, id: t.$id } as Tag,
+          ])
+        );
+        const mapped = contactTagsRes.documents
+          .filter((ct: any) => ct.tag_id && tagsMap.has(ct.tag_id))
+          .map((ct: any) => ({
+            ...tagsMap.get(ct.tag_id)!,
+            contact_tag_id: ct.$id,
+          }));
+        setTags(mapped);
+      } else {
+        setTags([]);
+      }
+    } else {
+      setTags([]);
+    }
+
+    // Fetch pipeline stages for deals
+    const stageIds = [
+      ...new Set(dealsData.map((d: any) => d.stage_id).filter(Boolean)),
+    ];
+    if (stageIds.length > 0) {
+      const stagesRes = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.pipelineStages,
+        [Query.equal("$id", stageIds)]
+      );
+      const stagesMap = new Map(
+        stagesRes.documents.map((s: any) => [s.$id, { ...s, id: s.$id }])
+      );
+      setDeals((prev) =>
+        prev.map((deal) => ({
+          ...deal,
+          stage: stagesMap.get((deal as any).stage_id) as PipelineStage,
+        }))
+      );
     }
   }, [contact]);
 
@@ -88,25 +139,25 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     if (!contact || !newNote.trim()) return;
     setAddingNote(true);
 
-    const supabase = createClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
-
-    const { data, error } = await supabase
-      .from("contact_notes")
-      .insert({
-        contact_id: contact.id,
-        user_id: user?.id,
-        note_text: newNote.trim(),
-      })
-      .select()
-      .single();
-
-    if (!error && data) {
-      setNotes((prev) => [data, ...prev]);
+    try {
+      const currentUser = await account.get();
+      const doc = await databases.createDocument(
+        DATABASE_ID,
+        COLLECTIONS.contactNotes,
+        "unique()",
+        {
+          contact_id: contact.id,
+          user_id: currentUser.$id,
+          note_text: newNote.trim(),
+        }
+      );
+      setNotes((prev) => [
+        { ...doc, id: doc.$id } as unknown as ContactNote,
+        ...prev,
+      ]);
       setNewNote("");
+    } catch (err) {
+      console.error("Failed to add note:", err);
     }
     setAddingNote(false);
   }, [contact, newNote]);

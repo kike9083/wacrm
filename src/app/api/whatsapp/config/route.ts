@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+import { ID, Query } from 'node-appwrite'
 import { verifyPhoneNumber } from '@/lib/whatsapp/meta-api'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 
@@ -18,30 +20,29 @@ import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
  */
 export async function GET() {
   try {
-    const supabase = await createClient()
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const { account } = await createSessionClient()
+    let user
+    try {
+      user = await account.get()
+    } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('phone_number_id, access_token, status')
-      .eq('user_id', user.id)
-      .maybeSingle()
-
-    if (configError) {
-      console.error('Error fetching whatsapp_config:', configError)
+    const { databases } = createAdminClient()
+    let configs
+    try {
+      configs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.whatsappConfig,
+        [Query.equal('user_id', user.$id)]
+      )
+    } catch {
       return NextResponse.json(
         { connected: false, reason: 'db_error', message: 'Failed to fetch configuration' },
         { status: 200 }
       )
     }
+    const config = configs.documents[0]
 
     if (!config) {
       return NextResponse.json(
@@ -109,14 +110,11 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   try {
-    const supabase = await createClient()
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const { account } = await createSessionClient()
+    let user
+    try {
+      user = await account.get()
+    } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -165,48 +163,63 @@ export async function POST(request: Request) {
     }
 
     // Upsert — overwrite any existing (possibly corrupted) config
-    const { data: existing } = await supabase
-      .from('whatsapp_config')
-      .select('id')
-      .eq('user_id', user.id)
-      .maybeSingle()
+    const { databases } = createAdminClient()
+    let existingDocs
+    try {
+      existingDocs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.whatsappConfig,
+        [Query.equal('user_id', user.$id)]
+      )
+    } catch {
+      return NextResponse.json(
+        { error: 'Failed to save configuration' },
+        { status: 500 }
+      )
+    }
+    const existing = existingDocs.documents[0]
 
     if (existing) {
-      const { error: updateError } = await supabase
-        .from('whatsapp_config')
-        .update({
-          phone_number_id,
-          waba_id: waba_id || null,
-          access_token: encryptedAccessToken,
-          verify_token: encryptedVerifyToken,
-          status: 'connected',
-          connected_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', user.id)
-
-      if (updateError) {
-        console.error('Error updating whatsapp_config:', updateError)
+      try {
+        await databases.updateDocument(
+          DATABASE_ID,
+          COLLECTIONS.whatsappConfig,
+          existing.$id,
+          {
+            phone_number_id,
+            waba_id: waba_id || null,
+            access_token: encryptedAccessToken,
+            verify_token: encryptedVerifyToken,
+            status: 'connected',
+            connected_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }
+        )
+      } catch {
+        console.error('Error updating whatsapp_config')
         return NextResponse.json(
           { error: 'Failed to update configuration' },
           { status: 500 }
         )
       }
     } else {
-      const { error: insertError } = await supabase
-        .from('whatsapp_config')
-        .insert({
-          user_id: user.id,
-          phone_number_id,
-          waba_id: waba_id || null,
-          access_token: encryptedAccessToken,
-          verify_token: encryptedVerifyToken,
-          status: 'connected',
-          connected_at: new Date().toISOString(),
-        })
-
-      if (insertError) {
-        console.error('Error inserting whatsapp_config:', insertError)
+      try {
+        await databases.createDocument(
+          DATABASE_ID,
+          COLLECTIONS.whatsappConfig,
+          ID.unique(),
+          {
+            user_id: user.$id,
+            phone_number_id,
+            waba_id: waba_id || null,
+            access_token: encryptedAccessToken,
+            verify_token: encryptedVerifyToken,
+            status: 'connected',
+            connected_at: new Date().toISOString(),
+          }
+        )
+      } catch {
+        console.error('Error inserting whatsapp_config')
         return NextResponse.json(
           { error: 'Failed to save configuration' },
           { status: 500 }
@@ -230,24 +243,41 @@ export async function POST(request: Request) {
  */
 export async function DELETE() {
   try {
-    const supabase = await createClient()
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const { account } = await createSessionClient()
+    let user
+    try {
+      user = await account.get()
+    } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { error: deleteError } = await supabase
-      .from('whatsapp_config')
-      .delete()
-      .eq('user_id', user.id)
+    const { databases } = createAdminClient()
+    let configs
+    try {
+      configs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.whatsappConfig,
+        [Query.equal('user_id', user.$id)]
+      )
+    } catch {
+      return NextResponse.json(
+        { error: 'Failed to delete configuration' },
+        { status: 500 }
+      )
+    }
+    const config = configs.documents[0]
+    if (!config) {
+      return NextResponse.json({ success: true })
+    }
 
-    if (deleteError) {
-      console.error('Error deleting whatsapp_config:', deleteError)
+    try {
+      await databases.deleteDocument(
+        DATABASE_ID,
+        COLLECTIONS.whatsappConfig,
+        config.$id
+      )
+    } catch {
+      console.error('Error deleting whatsapp_config')
       return NextResponse.json(
         { error: 'Failed to delete configuration' },
         { status: 500 }

@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { databases, account } from '@/lib/appwrite/client';
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
+import { Query } from 'appwrite';
 import { CustomField, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -96,9 +98,12 @@ export function Step2SelectAudience({
     async function fetchTags() {
       setLoadingTags(true);
       try {
-        const supabase = createClient();
-        const { data } = await supabase.from('tags').select('*').order('name');
-        setTags(data ?? []);
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.tags,
+          [Query.orderAsc('name')],
+        );
+        setTags(response.documents.map((d: any) => ({ ...d, id: d.$id })) as Tag[]);
       } finally {
         setLoadingTags(false);
       }
@@ -112,12 +117,12 @@ export function Step2SelectAudience({
     async function fetchFields() {
       setLoadingFields(true);
       try {
-        const supabase = createClient();
-        const { data } = await supabase
-          .from('custom_fields')
-          .select('*')
-          .order('field_name');
-        setCustomFields(data ?? []);
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.customFields,
+          [Query.orderAsc('field_name')],
+        );
+        setCustomFields(response.documents.map((d: any) => ({ ...d, id: d.$id })) as CustomField[]);
       } finally {
         setLoadingFields(false);
       }
@@ -128,38 +133,48 @@ export function Step2SelectAudience({
   const fetchEstimatedCount = useCallback(async () => {
     setLoadingCount(true);
     try {
-      const supabase = createClient();
-
-      // Base query — produces the superset before exclude is applied.
-      let baseIds: Set<string> | null = null; // null means "all contacts"
+      let baseIds: Set<string> | null = null;
 
       if (audience.type === 'all') {
-        // Handled below — full-table count adjusted by excludes.
       } else if (
         audience.type === 'tags' &&
         audience.tagIds &&
         audience.tagIds.length > 0
       ) {
-        const { data } = await supabase
-          .from('contact_tags')
-          .select('contact_id')
-          .in('tag_id', audience.tagIds);
-        baseIds = new Set((data ?? []).map((r) => r.contact_id));
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.contactTags,
+          [Query.equal('tag_id', audience.tagIds)],
+        );
+        baseIds = new Set((response.documents ?? []).map((r: any) => r.contact_id));
       } else if (
         audience.type === 'custom_field' &&
         audience.customField?.fieldId &&
         audience.customField.value
       ) {
         const { fieldId, operator, value } = audience.customField;
-        let q = supabase
-          .from('contact_custom_values')
-          .select('contact_id')
-          .eq('custom_field_id', fieldId);
-        if (operator === 'is') q = q.eq('value', value);
-        else if (operator === 'is_not') q = q.neq('value', value);
-        else q = q.ilike('value', `%${value}%`);
-        const { data } = await q;
-        baseIds = new Set((data ?? []).map((r) => r.contact_id));
+        if (operator === 'contains') {
+          const response = await databases.listDocuments(
+            DATABASE_ID,
+            COLLECTIONS.contactCustomValues,
+            [Query.equal('custom_field_id', fieldId)],
+          );
+          baseIds = new Set(
+            (response.documents ?? [])
+              .filter((m: any) => m.value?.includes(value))
+              .map((m: any) => m.contact_id),
+          );
+        } else {
+          const queries = [Query.equal('custom_field_id', fieldId)];
+          if (operator === 'is') queries.push(Query.equal('value', value));
+          else if (operator === 'is_not') queries.push(Query.notEqual('value', value));
+          const response = await databases.listDocuments(
+            DATABASE_ID,
+            COLLECTIONS.contactCustomValues,
+            queries,
+          );
+          baseIds = new Set((response.documents ?? []).map((m: any) => m.contact_id));
+        }
       } else if (
         audience.type === 'csv' &&
         audience.csvContacts &&
@@ -168,19 +183,18 @@ export function Step2SelectAudience({
         setEstimatedCount(audience.csvContacts.length);
         return;
       } else {
-        // Partially-configured audience — wait for the user to finish.
         setEstimatedCount(null);
         return;
       }
 
-      // Apply exclude tags
       let excludeSet: Set<string> | null = null;
       if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-        const { data: excludeRows } = await supabase
-          .from('contact_tags')
-          .select('contact_id')
-          .in('tag_id', audience.excludeTagIds);
-        excludeSet = new Set((excludeRows ?? []).map((r) => r.contact_id));
+        const excludeRes = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.contactTags,
+          [Query.equal('tag_id', audience.excludeTagIds)],
+        );
+        excludeSet = new Set((excludeRes.documents ?? []).map((r: any) => r.contact_id));
       }
 
       if (baseIds) {
@@ -189,11 +203,12 @@ export function Step2SelectAudience({
         );
         setEstimatedCount(effective.length);
       } else {
-        // "All" — fetch the total, then subtract exclude set if any.
-        const { count } = await supabase
-          .from('contacts')
-          .select('*', { count: 'exact', head: true });
-        const total = count ?? 0;
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.contacts,
+          [Query.limit(1)],
+        );
+        const total = response.total ?? 0;
         setEstimatedCount(excludeSet ? Math.max(0, total - excludeSet.size) : total);
       }
     } finally {

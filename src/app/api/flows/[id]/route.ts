@@ -1,50 +1,31 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { supabaseAdmin } from '@/lib/flows/admin-client'
-
-/**
- * GET   /api/flows/[id]  — fetch one flow with its nodes.
- * PUT   /api/flows/[id]  — replace name/trigger/entry/fallback + the
- *                          full node graph (delete-then-insert under
- *                          the hood; not atomic, but the runner is
- *                          resilient to mid-edit reads — node_not_found
- *                          gracefully ends the run).
- * DELETE /api/flows/[id] — hard delete (RLS+CASCADE clean up nodes,
- *                          runs, events).
- *
- * All three require a signed-in caller who owns the flow. Flows is in
- * soft-GA — the beta gate that previously 404'd non-beta accounts is
- * gone; the "Beta" label in the UI is the only remaining signal.
- */
+import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+import { ID, Query } from 'node-appwrite'
 
 async function requireOwnership(
   flowId: string,
 ): Promise<
-  | {
-      ok: true
-      userId: string
-      supabase: Awaited<ReturnType<typeof createClient>>
-    }
+  | { ok: true; userId: string }
   | { ok: false; status: number; body: { error: string } }
 > {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) {
+  const { account } = await createSessionClient()
+  let user
+  try {
+    user = await account.get()
+  } catch {
     return { ok: false, status: 401, body: { error: 'Unauthorized' } }
   }
-  // RLS scopes this to the caller — a flow owned by another user
-  // returns null (404 below).
-  const { data: flow } = await supabase
-    .from('flows')
-    .select('id')
-    .eq('id', flowId)
-    .maybeSingle()
-  if (!flow) {
+  const { databases } = createAdminClient()
+  try {
+    const flow = await databases.getDocument(DATABASE_ID, COLLECTIONS.flows, flowId)
+    if ((flow as any).user_id !== user.$id) {
+      return { ok: false, status: 404, body: { error: 'Not found' } }
+    }
+  } catch {
     return { ok: false, status: 404, body: { error: 'Not found' } }
   }
-  return { ok: true, userId: user.id, supabase }
+  return { ok: true, userId: user.$id }
 }
 
 export async function GET(
@@ -54,20 +35,16 @@ export async function GET(
   const { id } = await context.params
   const guard = await requireOwnership(id)
   if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status })
-  const { supabase } = guard
 
-  const [{ data: flow }, { data: nodes }] = await Promise.all([
-    supabase.from('flows').select('*').eq('id', id).maybeSingle(),
-    supabase
-      .from('flow_nodes')
-      .select('*')
-      .eq('flow_id', id)
-      .order('created_at', { ascending: true }),
+  const { databases } = createAdminClient()
+  const [flow, nodesResult] = await Promise.all([
+    databases.getDocument(DATABASE_ID, COLLECTIONS.flows, id),
+    databases.listDocuments(DATABASE_ID, COLLECTIONS.flowNodes, [
+      Query.equal('flow_id', id),
+      Query.orderAsc('created_at'),
+    ]),
   ])
-  if (!flow) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  }
-  return NextResponse.json({ flow, nodes: nodes ?? [] })
+  return NextResponse.json({ flow, nodes: nodesResult.documents ?? [] })
 }
 
 interface PutBody {
@@ -105,11 +82,8 @@ export async function PUT(
     )
   }
 
-  const admin = supabaseAdmin()
+  const { databases } = createAdminClient()
 
-  // Update the flow row first — the body may not include `nodes` (a
-  // header-only save for editing the trigger config without touching
-  // the graph). Skip node replacement in that case.
   const flowPatch: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
   }
@@ -124,52 +98,58 @@ export async function PUT(
   if (body.fallback_policy !== undefined)
     flowPatch.fallback_policy = body.fallback_policy
 
-  const { error: updErr } = await admin
-    .from('flows')
-    .update(flowPatch)
-    .eq('id', id)
-  if (updErr) {
-    return NextResponse.json({ error: updErr.message }, { status: 500 })
+  try {
+    await databases.updateDocument(DATABASE_ID, COLLECTIONS.flows, id, flowPatch)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'update failed'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 
   if (body.nodes !== undefined) {
-    // Delete-then-insert. Not transactional but the runner handles
-    // mid-edit reads safely (a node_not_found ends the run cleanly).
-    const { error: delErr } = await admin
-      .from('flow_nodes')
-      .delete()
-      .eq('flow_id', id)
-    if (delErr) {
-      return NextResponse.json({ error: delErr.message }, { status: 500 })
+    try {
+      const existing = await databases.listDocuments(DATABASE_ID, COLLECTIONS.flowNodes, [
+        Query.equal('flow_id', id),
+      ])
+      for (const doc of existing.documents) {
+        await databases.deleteDocument(DATABASE_ID, COLLECTIONS.flowNodes, doc.$id)
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'delete nodes failed'
+      return NextResponse.json({ error: message }, { status: 500 })
     }
+
     if (body.nodes.length > 0) {
-      const { error: insErr } = await admin.from('flow_nodes').insert(
-        body.nodes.map((n) => ({
-          flow_id: id,
-          node_key: n.node_key,
-          node_type: n.node_type,
-          config: n.config,
-          position_x: n.position_x ?? 0,
-          position_y: n.position_y ?? 0,
-        })),
-      )
-      if (insErr) {
-        return NextResponse.json({ error: insErr.message }, { status: 500 })
+      try {
+        for (const n of body.nodes) {
+          await databases.createDocument(
+            DATABASE_ID,
+            COLLECTIONS.flowNodes,
+            ID.unique(),
+            {
+              flow_id: id,
+              node_key: n.node_key,
+              node_type: n.node_type,
+              config: n.config,
+              position_x: n.position_x ?? 0,
+              position_y: n.position_y ?? 0,
+            }
+          )
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'insert nodes failed'
+        return NextResponse.json({ error: message }, { status: 500 })
       }
     }
   }
 
-  // Re-fetch and return the new state — the editor uses the response
-  // to reconcile its local form state.
-  const [{ data: flow }, { data: nodes }] = await Promise.all([
-    admin.from('flows').select('*').eq('id', id).maybeSingle(),
-    admin
-      .from('flow_nodes')
-      .select('*')
-      .eq('flow_id', id)
-      .order('created_at', { ascending: true }),
+  const [flow, nodesResult] = await Promise.all([
+    databases.getDocument(DATABASE_ID, COLLECTIONS.flows, id),
+    databases.listDocuments(DATABASE_ID, COLLECTIONS.flowNodes, [
+      Query.equal('flow_id', id),
+      Query.orderAsc('created_at'),
+    ]),
   ])
-  return NextResponse.json({ flow, nodes: nodes ?? [] })
+  return NextResponse.json({ flow, nodes: nodesResult.documents ?? [] })
 }
 
 export async function DELETE(
@@ -180,14 +160,12 @@ export async function DELETE(
   const guard = await requireOwnership(id)
   if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status })
 
-  // CASCADE on flow_nodes / flow_runs / flow_run_events handles the
-  // children. Active runs end abruptly — there's no graceful "drain"
-  // mechanism in v1, but that's intentional: deleting a flow is a
-  // deliberate destructive action and the partial unique index will
-  // free up the contact for new triggers immediately.
-  const { error } = await supabaseAdmin().from('flows').delete().eq('id', id)
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  const { databases } = createAdminClient()
+  try {
+    await databases.deleteDocument(DATABASE_ID, COLLECTIONS.flows, id)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'delete failed'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
   return NextResponse.json({ ok: true })
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { supabaseAdmin } from '@/lib/automations/admin-client'
+import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+import { Query } from 'node-appwrite'
 import {
   loadStepsTree,
   replaceSteps,
@@ -12,11 +13,12 @@ import {
 } from '@/lib/automations/validate'
 
 async function requireUser() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  return user
+  const { account } = await createSessionClient()
+  try {
+    return await account.get()
+  } catch {
+    return null
+  }
 }
 
 export async function GET(
@@ -27,16 +29,16 @@ export async function GET(
   const user = await requireUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const admin = supabaseAdmin()
-  const { data: automation, error } = await admin
-    .from('automations')
-    .select('*')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .maybeSingle()
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  if (!automation) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  const { databases } = createAdminClient()
+  let automation
+  try {
+    automation = await databases.getDocument(DATABASE_ID, COLLECTIONS.automations, id)
+    if (automation.user_id !== user.$id) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+  } catch {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
 
   const steps = await loadStepsTree(id)
   return NextResponse.json({ automation, steps })
@@ -53,16 +55,15 @@ export async function PATCH(
   const body = await request.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
 
-  const admin = supabaseAdmin()
+  const { databases } = createAdminClient()
 
-  // Ownership check before we touch anything. Load the fields we need
-  // to compute the post-patch "effective" state for validation.
-  const { data: existing } = await admin
-    .from('automations')
-    .select('id, user_id, is_active, trigger_type, trigger_config')
-    .eq('id', id)
-    .maybeSingle()
-  if (!existing || existing.user_id !== user.id) {
+  let existing
+  try {
+    existing = await databases.getDocument(DATABASE_ID, COLLECTIONS.automations, id)
+    if (existing.user_id !== user.$id) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+  } catch {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
@@ -77,10 +78,6 @@ export async function PATCH(
     if (k in body) update[k] = body[k]
   }
 
-  // If this PATCH leaves the automation active (either explicitly
-  // activating it OR editing an already-active one), validate the
-  // merged configuration first. Activation is the natural gate — drafts
-  // are still allowed to be incomplete.
   const willBeActive =
     typeof update.is_active === 'boolean' ? update.is_active : existing.is_active
   if (willBeActive) {
@@ -105,11 +102,12 @@ export async function PATCH(
   }
 
   if (Object.keys(update).length > 0) {
-    const { error: updErr } = await admin
-      .from('automations')
-      .update(update)
-      .eq('id', id)
-    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
+    try {
+      await databases.updateDocument(DATABASE_ID, COLLECTIONS.automations, id, update)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'update failed'
+      return NextResponse.json({ error: message }, { status: 500 })
+    }
   }
 
   if (Array.isArray(body.steps)) {
@@ -128,11 +126,15 @@ export async function DELETE(
   const user = await requireUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { error } = await supabaseAdmin()
-    .from('automations')
-    .delete()
-    .eq('id', id)
-    .eq('user_id', user.id)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const { databases } = createAdminClient()
+  try {
+    const automation = await databases.getDocument(DATABASE_ID, COLLECTIONS.automations, id)
+    if (automation.user_id !== user.$id) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+    await databases.deleteDocument(DATABASE_ID, COLLECTIONS.automations, id)
+  } catch {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
   return NextResponse.json({ ok: true })
 }

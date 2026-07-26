@@ -1,21 +1,8 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { supabaseAdmin } from '@/lib/flows/admin-client'
+import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+import { Query } from 'node-appwrite'
 import { validateFlowForActivation } from '@/lib/flows/validate'
-
-/**
- * POST /api/flows/[id]/activate
- *
- * Body: { status: 'draft' | 'active' | 'archived' }
- *
- * Activating runs the full validator and refuses on any 'error'
- * severity issue. Drafts and archives are unconditional — users
- * need to be able to save broken-work-in-progress and pause flows
- * without first fixing them.
- *
- * Returns the updated flow on success; on validation failure returns
- * the full issue list so the builder can highlight each problem.
- */
 
 export async function POST(
   request: Request,
@@ -23,11 +10,11 @@ export async function POST(
 ) {
   const { id } = await context.params
 
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) {
+  const { account } = await createSessionClient()
+  let user
+  try {
+    user = await account.get()
+  } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -42,42 +29,35 @@ export async function POST(
     )
   }
 
-  // Ownership via RLS — caller's client.
-  const { data: existing } = await supabase
-    .from('flows')
-    .select('id')
-    .eq('id', id)
-    .maybeSingle()
-  if (!existing) {
+  const { databases } = createAdminClient()
+
+  try {
+    const existing = await databases.getDocument(DATABASE_ID, COLLECTIONS.flows, id)
+    if ((existing as any).user_id !== user.$id) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+  } catch {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  const admin = supabaseAdmin()
-
   if (status === 'active') {
-    // Re-load with the full payload the validator needs.
-    const [{ data: flow }, { data: nodes }] = await Promise.all([
-      admin
-        .from('flows')
-        .select('name, trigger_type, trigger_config, entry_node_id')
-        .eq('id', id)
-        .maybeSingle(),
-      admin
-        .from('flow_nodes')
-        .select('node_key, node_type, config')
-        .eq('flow_id', id),
+    const [flow, nodesResult] = await Promise.all([
+      databases.getDocument(DATABASE_ID, COLLECTIONS.flows, id),
+      databases.listDocuments(DATABASE_ID, COLLECTIONS.flowNodes, [
+        Query.equal('flow_id', id),
+      ]),
     ])
     if (!flow) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
     const issues = validateFlowForActivation(
-      flow as {
+      flow as unknown as {
         name: string
         trigger_type: 'keyword' | 'first_inbound_message' | 'manual'
         trigger_config: Record<string, unknown>
         entry_node_id: string | null
       },
-      (nodes ?? []) as Array<{
+      (nodesResult.documents ?? []) as unknown as Array<{
         node_key: string
         node_type: string
         config: Record<string, unknown>
@@ -95,14 +75,16 @@ export async function POST(
     }
   }
 
-  const { data: updated, error } = await admin
-    .from('flows')
-    .update({ status, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select()
-    .maybeSingle()
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  try {
+    const updated = await databases.updateDocument(
+      DATABASE_ID,
+      COLLECTIONS.flows,
+      id,
+      { status, updated_at: new Date().toISOString() }
+    )
+    return NextResponse.json({ flow: updated })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'update failed'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
-  return NextResponse.json({ flow: updated })
 }

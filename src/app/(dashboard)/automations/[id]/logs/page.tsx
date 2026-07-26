@@ -11,11 +11,14 @@ import {
   ChevronRight,
 } from "lucide-react"
 
-import { createClient } from "@/lib/supabase/client"
+import { databases } from "@/lib/appwrite/client"
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db"
+import { Query } from "appwrite"
 import type {
   Automation,
   AutomationLog,
   AutomationLogStepResult,
+  Contact,
 } from "@/types"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -37,24 +40,40 @@ export default function AutomationLogsPage({
   useEffect(() => {
     async function load() {
       try {
-        const supabase = createClient()
-        const [autRes, logRes] = await Promise.all([
-          supabase
-            .from("automations")
-            .select("*")
-            .eq("id", id)
-            .maybeSingle(),
-          supabase
-            .from("automation_logs")
-            .select("*, contact:contacts(id, name, phone)")
-            .eq("automation_id", id)
-            .order("created_at", { ascending: false })
-            .limit(100),
+        const [automation, { documents: logDocs }] = await Promise.all([
+          databases.getDocument(DATABASE_ID, COLLECTIONS.automations, id),
+          databases.listDocuments(DATABASE_ID, COLLECTIONS.automationLogs, [
+            Query.equal("automation_id", id),
+            Query.orderDesc("created_at"),
+            Query.limit(100),
+          ]),
         ])
-        if (autRes.error) throw autRes.error
-        if (logRes.error) throw logRes.error
-        setAutomation(autRes.data as Automation | null)
-        setLogs((logRes.data ?? []) as AutomationLog[])
+        const auto = automation as unknown as Automation
+        const rawLogs = logDocs as unknown as AutomationLog[]
+
+        const contactIds = rawLogs
+          .map((l) => l.contact_id)
+          .filter((id): id is string => id !== null)
+        const uniqueIds = [...new Set(contactIds)]
+        let contactMap: Record<string, Contact> = {}
+        if (uniqueIds.length > 0) {
+          const { documents: contacts } = await databases.listDocuments(
+            DATABASE_ID,
+            COLLECTIONS.contacts,
+            [Query.equal("$id", uniqueIds)],
+          )
+          for (const c of contacts as unknown as Contact[]) {
+            contactMap[c.id] = c
+          }
+        }
+
+        setAutomation(auto)
+        setLogs(
+          rawLogs.map((l) => ({
+            ...l,
+            contact: l.contact_id ? contactMap[l.contact_id] : undefined,
+          })),
+        )
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load logs")
       }

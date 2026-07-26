@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Plus, Trash2, Loader2, RefreshCw } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
+import { databases } from '@/lib/appwrite/client';
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
+import { Query, ID } from 'appwrite';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -91,7 +93,6 @@ const COMMON_LANGUAGE_CODES = [
 ];
 
 export function TemplateManager() {
-  const supabase = createClient();
   const { user, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
@@ -115,14 +116,12 @@ export function TemplateManager() {
     try {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from('message_templates')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setTemplates(data || []);
+      const response = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.messageTemplates,
+        [Query.equal('user_id', userId), Query.orderDesc('created_at')]
+      );
+      setTemplates(response.documents.map((d) => ({ ...d, id: d.$id })) as unknown as MessageTemplate[]);
     } catch (err) {
       console.error('Failed to fetch templates:', err);
       toast.error('Failed to load templates');
@@ -159,11 +158,12 @@ export function TemplateManager() {
         status: 'Draft' as const,
       };
 
-      const { error } = await supabase
-        .from('message_templates')
-        .insert(payload);
-
-      if (error) throw error;
+      await databases.createDocument(
+        DATABASE_ID,
+        COLLECTIONS.messageTemplates,
+        ID.unique(),
+        payload
+      );
 
       toast.success('Template created successfully');
       setDialogOpen(false);
@@ -229,12 +229,11 @@ export function TemplateManager() {
 
   async function handleDelete(id: string) {
     try {
-      const { error } = await supabase
-        .from('message_templates')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
+      await databases.deleteDocument(
+        DATABASE_ID,
+        COLLECTIONS.messageTemplates,
+        id
+      );
       toast.success('Template deleted');
       setTemplates((prev) => prev.filter((t) => t.id !== id));
     } catch (err) {

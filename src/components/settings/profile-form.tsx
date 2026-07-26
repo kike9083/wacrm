@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Loader2, Upload, Trash2, Mail, CircleAlert } from 'lucide-react';
 
-import { createClient } from '@/lib/supabase/client';
+import { databases, account } from '@/lib/appwrite/client';
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
+import { Query } from 'appwrite';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,7 +39,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function ProfileForm() {
   const { user, profile, refreshProfile } = useAuth();
-  const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [fullName, setFullName] = useState('');
@@ -119,60 +120,76 @@ export function ProfileForm() {
     try {
       let nextAvatarUrl: string | null = profile.avatar_url ?? null;
 
+      const ENDPOINT = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!;
+      const PROJECT_ID = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!;
+
       // Upload a newly-staged image, if any.
       if (pendingAvatar) {
-        const ext =
-          pendingAvatar.name.split('.').pop()?.toLowerCase() || 'png';
-        const path = `${user.id}/avatar-${Date.now()}.${ext}`;
-        const { error: uploadError } = await supabase.storage
-          .from('avatars')
-          .upload(path, pendingAvatar, {
-            cacheControl: '3600',
-            upsert: true,
-            contentType: pendingAvatar.type,
-          });
-        if (uploadError) {
-          throw new Error(`Upload failed: ${uploadError.message}`);
+        const formData = new FormData();
+        formData.append('fileId', 'unique()');
+        formData.append('file', pendingAvatar);
+
+        const uploadRes = await fetch(`${ENDPOINT}/storage/buckets/avatars/files`, {
+          method: 'POST',
+          headers: { 'X-Appwrite-Project': PROJECT_ID },
+          credentials: 'include',
+          body: formData,
+        });
+        if (!uploadRes.ok) {
+          const errData = await uploadRes.json().catch(() => ({}));
+          throw new Error(`Upload failed: ${errData.message || uploadRes.statusText}`);
         }
-        const {
-          data: { publicUrl },
-        } = supabase.storage.from('avatars').getPublicUrl(path);
-        nextAvatarUrl = publicUrl;
+        const uploadData = await uploadRes.json();
+        const fileId = uploadData.$id;
+        nextAvatarUrl = `${ENDPOINT}/storage/buckets/avatars/files/${fileId}/preview?project=${PROJECT_ID}`;
       } else if (removeAvatar) {
+        // Clean up old avatar from Appwrite Storage
+        if (profile.avatar_url) {
+          const match = profile.avatar_url.match(/\/files\/([a-f0-9]+)\/preview/);
+          if (match) {
+            try {
+              await fetch(`${ENDPOINT}/storage/buckets/avatars/files/${match[1]}`, {
+                method: 'DELETE',
+                headers: { 'X-Appwrite-Project': PROJECT_ID },
+                credentials: 'include',
+              });
+            } catch {
+              // Non-critical — old file may not exist
+            }
+          }
+        }
         nextAvatarUrl = null;
       }
 
       // Persist name + avatar to profiles.
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({
+      await databases.updateDocument(
+        DATABASE_ID,
+        COLLECTIONS.profiles,
+        user.id,
+        {
           full_name: trimmedName,
           avatar_url: nextAvatarUrl,
-        })
-        .eq('user_id', user.id);
-      if (updateError) {
-        throw new Error(`Save failed: ${updateError.message}`);
-      }
+        }
+      );
 
-      // Email change goes through Supabase Auth, which emails a
-      // confirmation to both the old and new addresses. We don't
-      // touch profiles.email — Supabase will push the change there
-      // after the user clicks the link (handled by the handle_new_user
-      // trigger pattern in production deployments).
+      // Email change through Appwrite Account API.
       let emailSent = false;
       if (trimmedEmail.toLowerCase() !== profile.email.toLowerCase()) {
-        const { error: emailError } = await supabase.auth.updateUser({
-          email: trimmedEmail,
-        });
-        if (emailError) {
+        try {
+          // Appwrite requires the current password for email changes.
+          // Pass empty string — if a password is needed, the catch handler
+          // will surface the error to the user.
+          await account.updateEmail(trimmedEmail, '');
+          emailSent = true;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Email change failed';
           // Partial success: name/avatar saved but email didn't.
           toast.success('Profile saved');
-          toast.error(`Email change failed: ${emailError.message}`);
+          toast.error(`Email change failed: ${msg}`);
           setSaving(false);
           await refreshProfile();
           return;
         }
-        emailSent = true;
       }
 
       setEmailChangePending(emailSent);

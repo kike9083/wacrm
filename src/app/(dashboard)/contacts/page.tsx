@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { databases } from "@/lib/appwrite/client"
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db"
+import { Query } from "appwrite"
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -52,8 +54,6 @@ interface ContactWithTags extends Contact {
 }
 
 export default function ContactsPage() {
-  const supabase = createClient();
-
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -75,70 +75,77 @@ export default function ContactsPage() {
   const [tagsMap, setTagsMap] = useState<Record<string, Tag>>({});
 
   const fetchTags = useCallback(async () => {
-    const { data } = await supabase.from('tags').select('*');
-    if (data) {
+    const response = await databases.listDocuments(DATABASE_ID, COLLECTIONS.tags, []);
+    if (response.documents) {
       const map: Record<string, Tag> = {};
-      data.forEach((t) => (map[t.id] = t));
+      response.documents.forEach((t: any) => (map[t.$id] = t));
       setTagsMap(map);
     }
-  }, [supabase]);
+  }, []);
 
   const fetchContacts = useCallback(async () => {
     setLoading(true);
 
     const from = page * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
 
-    let query = supabase
-      .from('contacts')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(from, to);
+    const queries: string[] = [
+      Query.orderDesc('created_at'),
+      Query.limit(PAGE_SIZE),
+      Query.offset(from),
+    ];
 
     if (search.trim()) {
-      const term = `%${search.trim()}%`;
-      query = query.or(`name.ilike.${term},phone.ilike.${term},email.ilike.${term}`);
+      queries.push(Query.search('name', search.trim()));
     }
 
-    const { data, count, error } = await query;
-
-    if (error) {
+    let response;
+    try {
+      response = await databases.listDocuments(DATABASE_ID, COLLECTIONS.contacts, queries);
+    } catch {
       toast.error('Failed to load contacts');
       setLoading(false);
       return;
     }
 
-    setTotalCount(count ?? 0);
+    setTotalCount(response.total);
 
-    if (!data || data.length === 0) {
+    if (response.documents.length === 0) {
       setContacts([]);
       setLoading(false);
       return;
     }
 
     // Fetch tags for these contacts
-    const contactIds = data.map((c) => c.id);
-    const { data: contactTags } = await supabase
-      .from('contact_tags')
-      .select('contact_id, tag_id')
-      .in('contact_id', contactIds);
+    const contactIds = response.documents.map((c: any) => c.$id);
+    let contactTagsResponse;
+    try {
+      contactTagsResponse = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.contactTags,
+        [Query.equal('contact_id', contactIds)]
+      );
+    } catch {
+      contactTagsResponse = { documents: [] };
+    }
 
     const tagsByContact: Record<string, string[]> = {};
-    contactTags?.forEach((ct) => {
+    contactTagsResponse.documents.forEach((ct: any) => {
       if (!tagsByContact[ct.contact_id]) tagsByContact[ct.contact_id] = [];
       tagsByContact[ct.contact_id].push(ct.tag_id);
     });
 
-    const enriched: ContactWithTags[] = data.map((c) => ({
+    const enriched: ContactWithTags[] = response.documents.map((c: any) => ({
       ...c,
-      tags: (tagsByContact[c.id] ?? [])
+      id: c.$id,
+      created_at: c.$createdAt,
+      tags: (tagsByContact[c.$id] ?? [])
         .map((tid) => tagsMap[tid])
         .filter(Boolean),
     }));
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, tagsMap]);
+  }, [page, search, tagsMap]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -161,12 +168,11 @@ export default function ContactsPage() {
   }
 
   async function openEditForm(contact: Contact) {
-    const { data } = await supabase
-      .from('contact_tags')
-      .select('*')
-      .eq('contact_id', contact.id);
+    const response = await databases.listDocuments(DATABASE_ID, COLLECTIONS.contactTags, [
+      Query.equal('contact_id', contact.id),
+    ]);
     setEditContact(contact);
-    setEditContactTags(data ?? []);
+    setEditContactTags(response.documents as any[]);
     setFormOpen(true);
   }
 
@@ -184,16 +190,12 @@ export default function ContactsPage() {
     if (!deleteTarget) return;
     setDeleting(true);
 
-    const { error } = await supabase
-      .from('contacts')
-      .delete()
-      .eq('id', deleteTarget.id);
-
-    if (error) {
-      toast.error('Failed to delete contact');
-    } else {
+    try {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.contacts, deleteTarget.id);
       toast.success('Contact deleted');
       fetchContacts();
+    } catch {
+      toast.error('Failed to delete contact');
     }
 
     setDeleting(false);

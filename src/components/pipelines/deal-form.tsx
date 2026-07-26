@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { databases, account } from "@/lib/appwrite/client";
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
+import { Query } from "appwrite";
 import type {
   Contact,
   Conversation,
@@ -50,8 +52,6 @@ export function DealForm({
   defaultStageId,
   onSaved,
 }: DealFormProps) {
-  const supabase = createClient();
-
   const [title, setTitle] = useState("");
   const [value, setValue] = useState("");
   const [currency, setCurrency] = useState("USD");
@@ -108,17 +108,17 @@ export function DealForm({
     let cancelled = false;
     (async () => {
       const [c, p] = await Promise.all([
-        supabase.from("contacts").select("*").order("name"),
-        supabase.from("profiles").select("*").order("full_name"),
+        databases.listDocuments(DATABASE_ID, COLLECTIONS.contacts, [Query.orderAsc("name")]),
+        databases.listDocuments(DATABASE_ID, COLLECTIONS.profiles, [Query.orderAsc("full_name")]),
       ]);
       if (cancelled) return;
-      setContacts((c.data ?? []) as Contact[]);
-      setProfiles((p.data ?? []) as Profile[]);
+      setContacts((c.documents ?? []) as unknown as Contact[]);
+      setProfiles((p.documents ?? []) as unknown as Profile[]);
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, supabase]);
+  }, [open]);
 
   // Fetch linked conversation for the selected contact (newest open one).
   // Clearing on no-selection is sync with prop state; the populated
@@ -131,20 +131,23 @@ export function DealForm({
     }
     let cancelled = false;
     (async () => {
-      const { data } = await supabase
-        .from("conversations")
-        .select("*")
-        .eq("contact_id", contactId)
-        .order("last_message_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (cancelled) return;
-      setLinkedConversation((data as Conversation | null) ?? null);
+      try {
+        const { documents } = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.conversations,
+          [Query.equal("contact_id", contactId), Query.orderDesc("last_message_at"), Query.limit(1)]
+        );
+        if (cancelled) return;
+        setLinkedConversation((documents[0] as unknown as Conversation) ?? null);
+      } catch {
+        if (cancelled) return;
+        setLinkedConversation(null);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, contactId, supabase]);
+  }, [open, contactId]);
 
   async function handleSave() {
     if (!title.trim() || !contactId || !stageId) {
@@ -166,29 +169,34 @@ export function DealForm({
     };
 
     if (deal) {
-      const { error } = await supabase
-        .from("deals")
-        .update(payload)
-        .eq("id", deal.id);
-      if (error) {
+      try {
+        await databases.updateDocument(DATABASE_ID, COLLECTIONS.deals, deal.id, payload);
+      } catch {
         toast.error("Failed to save deal");
         setSaving(false);
         return;
       }
     } else {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const user = session?.user;
+      let user;
+      try {
+        user = await account.get();
+      } catch {
+        toast.error("Not signed in");
+        setSaving(false);
+        return;
+      }
       if (!user) {
         toast.error("Not signed in");
         setSaving(false);
         return;
       }
-      const { error } = await supabase
-        .from("deals")
-        .insert({ ...payload, user_id: user.id, status: "open" });
-      if (error) {
+      try {
+        await databases.createDocument(DATABASE_ID, COLLECTIONS.deals, "unique()", {
+          ...payload,
+          user_id: user.$id,
+          status: "open",
+        });
+      } catch {
         toast.error("Failed to create deal");
         setSaving(false);
         return;
@@ -204,15 +212,14 @@ export function DealForm({
   async function handleStatusChange(status: DealStatus) {
     if (!deal) return;
     setStatusAction(status);
-    const { error } = await supabase
-      .from("deals")
-      .update({ status })
-      .eq("id", deal.id);
-    setStatusAction(null);
-    if (error) {
+    try {
+      await databases.updateDocument(DATABASE_ID, COLLECTIONS.deals, deal.id, { status });
+    } catch {
+      setStatusAction(null);
       toast.error("Failed to update deal status");
       return;
     }
+    setStatusAction(null);
     toast.success(
       status === "won" ? "Marked as won" : status === "lost" ? "Marked as lost" : "Deal reopened",
     );
@@ -223,12 +230,14 @@ export function DealForm({
   async function handleDelete() {
     if (!deal) return;
     setDeleting(true);
-    const { error } = await supabase.from("deals").delete().eq("id", deal.id);
-    setDeleting(false);
-    if (error) {
+    try {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.deals, deal.id);
+    } catch {
+      setDeleting(false);
       toast.error("Failed to delete deal");
       return;
     }
+    setDeleting(false);
     toast.success("Deal deleted");
     setConfirmDelete(false);
     onOpenChange(false);

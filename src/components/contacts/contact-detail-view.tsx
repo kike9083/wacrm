@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { databases, account } from '@/lib/appwrite/client';
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
+import { Query } from 'appwrite';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal } from '@/types';
 import {
@@ -46,8 +48,6 @@ export function ContactDetailView({
   contactId,
   onUpdated,
 }: ContactDetailViewProps) {
-  const supabase = createClient();
-
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
   const [copiedPhone, setCopiedPhone] = useState(false);
@@ -84,84 +84,92 @@ export function ContactDetailView({
     if (!contactId) return;
     setLoading(true);
 
-    const { data } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('id', contactId)
-      .single();
-
-    if (data) {
-      setContact(data);
+    try {
+      const doc = await databases.getDocument(DATABASE_ID, COLLECTIONS.contacts, contactId);
+      setContact(doc as unknown as Contact);
+      const data = doc as any;
       setEditName(data.name ?? '');
       setEditPhone(data.phone);
       setEditEmail(data.email ?? '');
       setEditCompany(data.company ?? '');
+    } catch {
+      setContact(null);
     }
     setLoading(false);
-  }, [contactId, supabase]);
+  }, [contactId]);
 
   const fetchTags = useCallback(async () => {
     if (!contactId) return;
 
-    const [tagsRes, contactTagsRes] = await Promise.all([
-      supabase.from('tags').select('*').order('name'),
-      supabase.from('contact_tags').select('tag_id').eq('contact_id', contactId),
-    ]);
+    try {
+      const [tagsRes, contactTagsRes] = await Promise.all([
+        databases.listDocuments(DATABASE_ID, COLLECTIONS.tags, [Query.orderAsc('name')]),
+        databases.listDocuments(DATABASE_ID, COLLECTIONS.contactTags, [Query.equal('contact_id', contactId)]),
+      ]);
 
-    if (tagsRes.data) setAllTags(tagsRes.data);
-    if (contactTagsRes.data) {
-      setContactTagIds(contactTagsRes.data.map((ct) => ct.tag_id));
+      setAllTags(tagsRes.documents as unknown as Tag[]);
+      setContactTagIds(contactTagsRes.documents.map((ct: any) => ct.tag_id));
+    } catch {
+      setAllTags([]);
+      setContactTagIds([]);
     }
-  }, [contactId, supabase]);
+  }, [contactId]);
 
   const fetchNotes = useCallback(async () => {
     if (!contactId) return;
     setLoadingNotes(true);
 
-    const { data } = await supabase
-      .from('contact_notes')
-      .select('*')
-      .eq('contact_id', contactId)
-      .order('created_at', { ascending: false });
-
-    if (data) setNotes(data);
+    try {
+      const { documents } = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.contactNotes,
+        [Query.equal('contact_id', contactId), Query.orderDesc('created_at')]
+      );
+      setNotes(documents as unknown as ContactNote[]);
+    } catch {
+      setNotes([]);
+    }
     setLoadingNotes(false);
-  }, [contactId, supabase]);
+  }, [contactId]);
 
   const fetchCustomFields = useCallback(async () => {
     if (!contactId) return;
     setLoadingCustom(true);
 
-    const [fieldsRes, valuesRes] = await Promise.all([
-      supabase.from('custom_fields').select('*').order('field_name'),
-      supabase
-        .from('contact_custom_values')
-        .select('*')
-        .eq('contact_id', contactId),
-    ]);
+    try {
+      const [fieldsRes, valuesRes] = await Promise.all([
+        databases.listDocuments(DATABASE_ID, COLLECTIONS.customFields, [Query.orderAsc('field_name')]),
+        databases.listDocuments(DATABASE_ID, COLLECTIONS.contactCustomValues, [Query.equal('contact_id', contactId)]),
+      ]);
 
-    if (fieldsRes.data) setCustomFields(fieldsRes.data);
-    if (valuesRes.data) {
+      setCustomFields(fieldsRes.documents as unknown as CustomField[]);
       const map: Record<string, string> = {};
-      valuesRes.data.forEach((v) => {
+      valuesRes.documents.forEach((v: any) => {
         map[v.custom_field_id] = v.value ?? '';
       });
       setCustomValues(map);
+    } catch {
+      setCustomFields([]);
+      setCustomValues({});
     }
     setLoadingCustom(false);
-  }, [contactId, supabase]);
+  }, [contactId]);
 
   const fetchDeals = useCallback(async () => {
     if (!contactId) return;
     setLoadingDeals(true);
-    const { data } = await supabase
-      .from('deals')
-      .select('*, stage:pipeline_stages(*)')
-      .eq('contact_id', contactId)
-      .order('created_at', { ascending: false });
-    setDeals((data ?? []) as Deal[]);
+    try {
+      const { documents } = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.deals,
+        [Query.equal('contact_id', contactId), Query.orderDesc('created_at')]
+      );
+      setDeals(documents as unknown as Deal[]);
+    } catch {
+      setDeals([]);
+    }
     setLoadingDeals(false);
-  }, [contactId, supabase]);
+  }, [contactId]);
 
   useEffect(() => {
     if (open && contactId) {
@@ -187,23 +195,18 @@ export function ContactDetailView({
     }
 
     setSavingDetails(true);
-    const { error } = await supabase
-      .from('contacts')
-      .update({
+    try {
+      await databases.updateDocument(DATABASE_ID, COLLECTIONS.contacts, contactId, {
         name: editName.trim() || null,
         phone: editPhone.trim(),
         email: editEmail.trim() || null,
         company: editCompany.trim() || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', contactId);
-
-    if (error) {
-      toast.error('Failed to update contact');
-    } else {
+      });
       toast.success('Contact updated');
       fetchContact();
       onUpdated();
+    } catch {
+      toast.error('Failed to update contact');
     }
     setSavingDetails(false);
   }
@@ -215,22 +218,30 @@ export function ContactDetailView({
     const isSelected = contactTagIds.includes(tagId);
 
     if (isSelected) {
-      const { error } = await supabase
-        .from('contact_tags')
-        .delete()
-        .eq('contact_id', contactId)
-        .eq('tag_id', tagId);
-      if (!error) {
+      try {
+        const existing = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.contactTags,
+          [Query.equal('contact_id', contactId), Query.equal('tag_id', tagId)]
+        );
+        if (existing.documents.length > 0) {
+          await databases.deleteDocument(DATABASE_ID, COLLECTIONS.contactTags, existing.documents[0].$id);
+        }
         setContactTagIds((prev) => prev.filter((id) => id !== tagId));
         onUpdated();
+      } catch {
+        // silently fail
       }
     } else {
-      const { error } = await supabase
-        .from('contact_tags')
-        .insert({ contact_id: contactId, tag_id: tagId });
-      if (!error) {
+      try {
+        await databases.createDocument(DATABASE_ID, COLLECTIONS.contactTags, 'unique()', {
+          contact_id: contactId,
+          tag_id: tagId,
+        });
         setContactTagIds((prev) => [...prev, tagId]);
         onUpdated();
+      } catch {
+        // silently fail
       }
     }
     setSavingTags(false);
@@ -240,43 +251,42 @@ export function ContactDetailView({
     if (!contactId || !newNote.trim()) return;
     setSavingNote(true);
 
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
+    let user;
+    try {
+      user = await account.get();
+    } catch {
+      toast.error('Not authenticated');
+      setSavingNote(false);
+      return;
+    }
     if (!user) {
       toast.error('Not authenticated');
       setSavingNote(false);
       return;
     }
 
-    const { error } = await supabase.from('contact_notes').insert({
-      contact_id: contactId,
-      user_id: user.id,
-      note_text: newNote.trim(),
-    });
-
-    if (error) {
-      toast.error('Failed to add note');
-    } else {
+    try {
+      await databases.createDocument(DATABASE_ID, COLLECTIONS.contactNotes, 'unique()', {
+        contact_id: contactId,
+        user_id: user.$id,
+        note_text: newNote.trim(),
+      });
       setNewNote('');
       fetchNotes();
       toast.success('Note added');
+    } catch {
+      toast.error('Failed to add note');
     }
     setSavingNote(false);
   }
 
   async function deleteNote(noteId: string) {
-    const { error } = await supabase
-      .from('contact_notes')
-      .delete()
-      .eq('id', noteId);
-
-    if (error) {
-      toast.error('Failed to delete note');
-    } else {
+    try {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.contactNotes, noteId);
       setNotes((prev) => prev.filter((n) => n.id !== noteId));
       toast.success('Note deleted');
+    } catch {
+      toast.error('Failed to delete note');
     }
   }
 
@@ -286,10 +296,16 @@ export function ContactDetailView({
 
     try {
       // Delete existing values and re-insert
-      await supabase
-        .from('contact_custom_values')
-        .delete()
-        .eq('contact_id', contactId);
+      const existing = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.contactCustomValues,
+        [Query.equal('contact_id', contactId)]
+      );
+      await Promise.all(
+        existing.documents.map((v: any) =>
+          databases.deleteDocument(DATABASE_ID, COLLECTIONS.contactCustomValues, v.$id)
+        )
+      );
 
       const rows = Object.entries(customValues)
         .filter(([, val]) => val.trim())
@@ -300,10 +316,11 @@ export function ContactDetailView({
         }));
 
       if (rows.length > 0) {
-        const { error } = await supabase
-          .from('contact_custom_values')
-          .insert(rows);
-        if (error) throw error;
+        await Promise.all(
+          rows.map((r) =>
+            databases.createDocument(DATABASE_ID, COLLECTIONS.contactCustomValues, 'unique()', r)
+          )
+        );
       }
 
       toast.success('Custom fields saved');

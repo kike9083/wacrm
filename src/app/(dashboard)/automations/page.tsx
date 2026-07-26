@@ -18,7 +18,9 @@ import {
   Loader2,
 } from "lucide-react"
 
-import { createClient } from "@/lib/supabase/client"
+import { databases } from "@/lib/appwrite/client"
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db"
+import { Query } from "appwrite"
 import type { Automation } from "@/types"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -64,13 +66,12 @@ export default function AutomationsPage() {
 
   async function load() {
     try {
-      const supabase = createClient()
-      const { data, error: fetchErr } = await supabase
-        .from("automations")
-        .select("*")
-        .order("created_at", { ascending: false })
-      if (fetchErr) throw fetchErr
-      setAutomations((data ?? []) as Automation[])
+      const { documents } = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.automations,
+        [Query.orderDesc("created_at")],
+      )
+      setAutomations(documents as unknown as Automation[])
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load automations")
     }

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { Loader2, KeyRound } from 'lucide-react';
 
-import { createClient } from '@/lib/supabase/client';
+import { account } from '@/lib/appwrite/client';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,7 +21,6 @@ const MIN_PASSWORD = 8;
 
 export function PasswordForm() {
   const { profile } = useAuth();
-  const supabase = createClient();
 
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -47,24 +46,20 @@ export function PasswordForm() {
     setSaving(true);
 
     try {
-      // Supabase doesn't expose a "verify password without issuing a
-      // session" API, so we re-authenticate with the provided current
-      // password. If it matches, the session refreshes silently; if it
-      // doesn't, we abort before calling updateUser.
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: profile.email,
-        password: current,
-      });
-      if (signInError) {
+      // Verify current password by creating a session. If it fails, the
+      // password is wrong — we abort before calling updatePassword.
+      try {
+        await account.createEmailPasswordSession(profile.email, current);
+      } catch {
         toast.error('Current password is incorrect');
         return;
       }
 
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: next,
-      });
-      if (updateError) {
-        toast.error(`Password update failed: ${updateError.message}`);
+      try {
+        await account.updatePassword(next);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Password update failed';
+        toast.error(`Password update failed: ${msg}`);
         return;
       }
 

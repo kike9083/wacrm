@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useCallback, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { client } from "@/lib/appwrite/client";
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
 import type { Message, Conversation } from "@/types";
-import type { RealtimeChannel } from "@supabase/supabase-js";
 
 interface RealtimeEvent<T> {
   eventType: "INSERT" | "UPDATE" | "DELETE";
@@ -24,7 +24,7 @@ export function useRealtime({
   onConversationEvent,
   enabled = true,
 }: UseRealtimeOptions) {
-  const channelRef = useRef<RealtimeChannel | null>(null);
+  const unsubRef = useRef<(() => void) | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
   // Store latest callbacks in refs to avoid re-subscribing when the
@@ -42,50 +42,58 @@ export function useRealtime({
   useEffect(() => {
     if (!enabled) return;
 
-    const supabase = createClient();
+    const messagesChannel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.messages}.documents`;
+    const conversationsChannel = `databases.${DATABASE_ID}.collections.${COLLECTIONS.conversations}.documents`;
 
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "messages" },
-        (payload) => {
+    const unsub = client.subscribe(
+      [messagesChannel, conversationsChannel],
+      (response) => {
+        const event = response.events[0] ?? "";
+        const isInsert = event.includes(".create");
+        const isUpdate = event.includes(".update");
+        const isDelete = event.includes(".delete");
+        let eventType: RealtimeEvent<Message>["eventType"] | null = null;
+        if (isInsert) eventType = "INSERT";
+        else if (isUpdate) eventType = "UPDATE";
+        else if (isDelete) eventType = "DELETE";
+
+        if (!eventType) return;
+
+        const isMessages = event.startsWith(messagesChannel);
+        const isConversations = event.startsWith(conversationsChannel);
+
+        if (isMessages) {
           onMessageRef.current?.({
-            eventType: payload.eventType as RealtimeEvent<Message>["eventType"],
-            new: payload.new as Message,
-            old: payload.old as Partial<Message>,
+            eventType,
+            new: response.payload as Message,
+            old: {},
           });
         }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "conversations" },
-        (payload) => {
-          onConversationRef.current?.({
-            eventType: payload.eventType as RealtimeEvent<Conversation>["eventType"],
-            new: payload.new as Conversation,
-            old: payload.old as Partial<Conversation>,
-          });
-        }
-      )
-      .subscribe((status) => {
-        setIsConnected(status === "SUBSCRIBED");
-      });
 
-    channelRef.current = channel;
+        if (isConversations) {
+          onConversationRef.current?.({
+            eventType,
+            new: response.payload as Conversation,
+            old: {},
+          });
+        }
+      },
+    );
+
+    setIsConnected(true);
+    unsubRef.current = unsub;
 
     return () => {
-      supabase.removeChannel(channel);
-      channelRef.current = null;
+      unsub();
+      unsubRef.current = null;
       setIsConnected(false);
     };
   }, [channelName, enabled]);
 
   const unsubscribe = useCallback(() => {
-    if (channelRef.current) {
-      const supabase = createClient();
-      supabase.removeChannel(channelRef.current);
-      channelRef.current = null;
+    if (unsubRef.current) {
+      unsubRef.current();
+      unsubRef.current = null;
       setIsConnected(false);
     }
   }, []);

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+import { ID, Query } from 'node-appwrite'
 import { decrypt } from '@/lib/whatsapp/encryption'
 
 /**
@@ -85,25 +87,35 @@ function normalizeStatus(
 
 export async function POST() {
   try {
-    const supabase = await createClient()
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const { account } = await createSessionClient()
+    let user
+    try {
+      user = await account.get()
+    } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // whatsapp_config holds waba_id + encrypted access_token.
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('user_id', user.id)
-      .single()
+    const { databases } = createAdminClient()
 
-    if (configError || !config) {
+    // whatsapp_config holds waba_id + encrypted access_token.
+    let configs
+    try {
+      configs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.whatsappConfig,
+        [Query.equal('user_id', user.$id)]
+      )
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            'WhatsApp not configured. Connect your WhatsApp Business account in Settings first.',
+        },
+        { status: 400 },
+      )
+    }
+    const config = configs.documents[0]
+    if (!config) {
       return NextResponse.json(
         {
           error:
@@ -162,7 +174,6 @@ export async function POST() {
     }
 
     // For each Meta template: upsert by (user_id, name, language).
-    // No UNIQUE constraint on that triple, so we match manually.
     let inserted = 0
     let updated = 0
     const errors: { name: string; language: string; message: string }[] = []
@@ -173,7 +184,7 @@ export async function POST() {
       const footer = (t.components ?? []).find((c) => c.type === 'FOOTER')
 
       const row = {
-        user_id: user.id,
+        user_id: user.$id,
         name: t.name,
         category: normalizeCategory(t.category),
         language: t.language,
@@ -185,49 +196,60 @@ export async function POST() {
         updated_at: new Date().toISOString(),
       }
 
-      const { data: existing, error: lookupErr } = await supabase
-        .from('message_templates')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('name', t.name)
-        .eq('language', t.language)
-        .maybeSingle()
-
-      if (lookupErr) {
+      // Look up existing template by (user_id, name, language)
+      let existingDocs
+      try {
+        existingDocs = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.messageTemplates,
+          [
+            Query.equal('user_id', user.$id),
+            Query.equal('name', t.name),
+            Query.equal('language', t.language),
+          ]
+        )
+      } catch (err) {
         errors.push({
           name: t.name,
           language: t.language,
-          message: lookupErr.message,
+          message: err instanceof Error ? err.message : 'Lookup failed',
         })
         continue
       }
 
-      if (existing?.id) {
-        const { error: updErr } = await supabase
-          .from('message_templates')
-          .update(row)
-          .eq('id', existing.id)
-        if (updErr) {
+      const existing = existingDocs.documents[0]
+
+      if (existing) {
+        try {
+          await databases.updateDocument(
+            DATABASE_ID,
+            COLLECTIONS.messageTemplates,
+            existing.$id,
+            row,
+          )
+          updated++
+        } catch (err) {
           errors.push({
             name: t.name,
             language: t.language,
-            message: updErr.message,
+            message: err instanceof Error ? err.message : 'Update failed',
           })
-        } else {
-          updated++
         }
       } else {
-        const { error: insErr } = await supabase
-          .from('message_templates')
-          .insert(row)
-        if (insErr) {
+        try {
+          await databases.createDocument(
+            DATABASE_ID,
+            COLLECTIONS.messageTemplates,
+            ID.unique(),
+            row,
+          )
+          inserted++
+        } catch (err) {
           errors.push({
             name: t.name,
             language: t.language,
-            message: insErr.message,
+            message: err instanceof Error ? err.message : 'Insert failed',
           })
-        } else {
-          inserted++
         }
       }
     }

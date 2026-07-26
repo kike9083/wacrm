@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { databases, account } from "@/lib/appwrite/client";
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
+import { Query } from "appwrite";
 import type { MessageTemplate } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,37 +66,40 @@ export function TemplatePicker({
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        if (!cancelled) {
-          setTemplates([]);
-          setLoading(false);
+      try {
+        const currentUser = await account.get();
+        if (!currentUser) {
+          if (!cancelled) {
+            setTemplates([]);
+            setLoading(false);
+          }
+          return;
         }
-        return;
-      }
 
-      // Only Approved templates are sendable through Meta — anything else
-      // would 400 on the send route. Hide them rather than letting the
-      // user pick a template that will be rejected.
-      const { data, error } = await supabase
-        .from("message_templates")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("status", "Approved")
-        .order("created_at", { ascending: false });
-
-      if (cancelled) return;
-      if (error) {
-        console.error("Failed to fetch templates:", error);
-        setTemplates([]);
-      } else {
-        setTemplates((data as MessageTemplate[]) ?? []);
+        // Only Approved templates are sendable through Meta — anything else
+        // would 400 on the send route. Hide them rather than letting the
+        // user pick a template that will be rejected.
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.messageTemplates,
+          [
+            Query.equal("user_id", currentUser.$id),
+            Query.equal("status", "Approved"),
+            Query.orderDesc("created_at"),
+          ]
+        );
+        if (!cancelled) {
+          setTemplates(
+            response.documents.map((d: any) => ({
+              ...d,
+              id: d.$id,
+            })) as MessageTemplate[]
+          );
+        }
+      } catch {
+        if (!cancelled) setTemplates([]);
       }
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     })();
 
     return () => {

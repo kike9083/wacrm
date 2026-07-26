@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { databases } from '@/lib/appwrite/client';
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
+import { Query } from 'appwrite';
 import { Contact, CustomField, MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -67,32 +69,36 @@ export function Step3Personalize({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const supabase = createClient();
       const [fieldsRes, contactRes] = await Promise.all([
-        supabase.from('custom_fields').select('*').order('field_name'),
-        supabase
-          .from('contacts')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle(),
+        databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.customFields,
+          [Query.orderAsc('field_name')],
+        ),
+        databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.contacts,
+          [Query.orderDesc('created_at'), Query.limit(1)],
+        ),
       ]);
       if (cancelled) return;
 
-      setCustomFields(fieldsRes.data ?? []);
+      setCustomFields(fieldsRes.documents.map((d: any) => ({ ...d, id: d.$id })));
       setLoadingFields(false);
 
-      const contact = contactRes.data ?? null;
+      const contactDoc = contactRes.documents[0] ?? null;
+      const contact = contactDoc ? { ...contactDoc, id: contactDoc.$id } as unknown as Contact : null;
       setFirstContact(contact);
 
       if (contact) {
-        const { data: customVals } = await supabase
-          .from('contact_custom_values')
-          .select('custom_field_id, value')
-          .eq('contact_id', contact.id);
+        const cvRes = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.contactCustomValues,
+          [Query.equal('contact_id', contact.id)],
+        );
         if (!cancelled) {
           const map = new Map<string, string>();
-          for (const row of customVals ?? []) {
+          for (const row of cvRes.documents ?? []) {
             map.set(row.custom_field_id, row.value ?? '');
           }
           setFirstContactCustomValues(map);

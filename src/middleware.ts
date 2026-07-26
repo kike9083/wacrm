@@ -1,31 +1,28 @@
-import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request })
+const ENDPOINT = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!
+const PROJECT_ID = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
+async function getSessionUser(sessionSecret: string) {
+  try {
+    const res = await fetch(`${ENDPOINT}/account`, {
+      headers: {
+        'X-Appwrite-Project': PROJECT_ID,
+        'X-Appwrite-Session': sessionSecret,
       },
-    }
-  )
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return data
+  } catch {
+    return null
+  }
+}
 
-  const { data: { user } } = await supabase.auth.getUser()
+export async function middleware(request: NextRequest) {
+  const sessionCookie = request.cookies.get('appwrite-session')
+  const user = sessionCookie?.value ? await getSessionUser(sessionCookie.value) : null
 
-  // Auth pages - redirect to dashboard if already logged in
   if (user && (
     request.nextUrl.pathname === '/login' ||
     request.nextUrl.pathname === '/signup' ||
@@ -36,7 +33,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // Protected pages - redirect to login if not authenticated
   const protectedPaths = ['/dashboard', '/inbox', '/contacts', '/pipelines', '/broadcasts', '/automations', '/settings']
   if (!user && protectedPaths.some(path => request.nextUrl.pathname.startsWith(path))) {
     const url = request.nextUrl.clone()
@@ -44,13 +40,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // API routes that need auth (not webhooks)
   if (!user && request.nextUrl.pathname.startsWith('/api/whatsapp/') &&
       !request.nextUrl.pathname.includes('/webhook')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  return supabaseResponse
+  return NextResponse.next()
 }
 
 export const config = {

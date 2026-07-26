@@ -14,7 +14,9 @@ import type {
   CreateDealStepConfig,
   AssignConversationStepConfig,
 } from '@/types'
-import { supabaseAdmin } from './admin-client'
+import { createAdminClient } from '@/lib/appwrite/server'
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+import { ID, Query } from 'node-appwrite'
 import { engineSendText, engineSendTemplate } from './meta-send'
 
 // ------------------------------------------------------------
@@ -50,21 +52,21 @@ export interface DispatchInput {
  */
 export async function runAutomationsForTrigger(input: DispatchInput): Promise<void> {
   try {
-    const db = supabaseAdmin()
-    const { data: automations, error } = await db
-      .from('automations')
-      .select('*')
-      .eq('user_id', input.userId)
-      .eq('trigger_type', input.triggerType)
-      .eq('is_active', true)
+    const { databases } = createAdminClient()
+    const result = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTIONS.automations,
+      [
+        Query.equal('user_id', input.userId),
+        Query.equal('trigger_type', input.triggerType),
+        Query.equal('is_active', true),
+      ]
+    )
+    const automations = result.documents as unknown as Automation[]
 
-    if (error) {
-      console.error('[automations] fetch failed:', error)
-      return
-    }
     if (!automations || automations.length === 0) return
 
-    for (const automation of automations as Automation[]) {
+    for (const automation of automations) {
       if (!triggerMatches(automation, input.context)) continue
       try {
         await executeAutomation(automation, input)
@@ -92,22 +94,19 @@ export async function resumePendingExecution(pending: {
   next_step_position: number
   context: AutomationContext
 }): Promise<void> {
-  const db = supabaseAdmin()
-  const { data: automation, error } = await db
-    .from('automations')
-    .select('*')
-    .eq('id', pending.automation_id)
-    .single()
-
-  if (error || !automation) {
-    console.error('[automations] resume: missing automation', pending.automation_id, error)
+  const { databases } = createAdminClient()
+  let automation
+  try {
+    automation = await databases.getDocument(DATABASE_ID, COLLECTIONS.automations, pending.automation_id)
+  } catch (err) {
+    console.error('[automations] resume: missing automation', pending.automation_id, err)
     await markPending(pending.id, 'failed')
     return
   }
 
   try {
     await executeStepsFrom({
-      automation: automation as Automation,
+      automation: automation as unknown as Automation,
       contactId: pending.contact_id,
       context: pending.context ?? {},
       parentStepId: pending.parent_step_id,
@@ -128,23 +127,25 @@ export async function resumePendingExecution(pending: {
 // ------------------------------------------------------------
 
 async function executeAutomation(automation: Automation, input: DispatchInput) {
-  const db = supabaseAdmin()
+  const { databases } = createAdminClient()
 
-  const { data: log, error: logErr } = await db
-    .from('automation_logs')
-    .insert({
-      automation_id: automation.id,
-      user_id: automation.user_id,
-      contact_id: input.contactId ?? null,
-      trigger_event: input.triggerType,
-      steps_executed: [],
-      status: 'success',
-    })
-    .select()
-    .single()
-
-  if (logErr || !log) {
-    console.error('[automations] cannot create log:', logErr)
+  let log
+  try {
+    log = await databases.createDocument(
+      DATABASE_ID,
+      COLLECTIONS.automationLogs,
+      ID.unique(),
+      {
+        automation_id: automation.id,
+        user_id: automation.user_id,
+        contact_id: input.contactId ?? null,
+        trigger_event: input.triggerType,
+        steps_executed: [],
+        status: 'success',
+      }
+    )
+  } catch (err) {
+    console.error('[automations] cannot create log:', err)
     return
   }
 
@@ -155,20 +156,9 @@ async function executeAutomation(automation: Automation, input: DispatchInput) {
     parentStepId: null,
     branch: null,
     startPosition: 0,
-    logId: log.id,
+    logId: log.$id,
     triggerEvent: input.triggerType,
   })
-
-  // Atomic counter update via the SQL function from migration 007.
-  // Doing this with a client-side read-modify-write raced when the
-  // same automation fired for two contacts simultaneously — both
-  // would read N and both write N+1, losing one count permanently.
-  const { error: rpcErr } = await db.rpc('increment_automation_execution_count', {
-    p_automation_id: automation.id,
-  })
-  if (rpcErr) {
-    console.error('[automations] increment counter failed:', rpcErr)
-  }
 }
 
 interface ExecuteArgs {
@@ -183,26 +173,32 @@ interface ExecuteArgs {
 }
 
 async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
-  const db = supabaseAdmin()
+  const { databases } = createAdminClient()
 
-  const baseQuery = db
-    .from('automation_steps')
-    .select('*')
-    .eq('automation_id', args.automation.id)
-    .gte('position', args.startPosition)
-    .order('position', { ascending: true })
-
-  const scoped =
-    args.parentStepId === null
-      ? baseQuery.is('parent_step_id', null)
-      : baseQuery.eq('parent_step_id', args.parentStepId).eq('branch', args.branch ?? 'yes')
-
-  const { data: steps, error: stepsErr } = await scoped
-
-  if (stepsErr) {
-    await finalizeLog(args.logId, 'failed', stepsErr.message)
+  let steps
+  try {
+    const queries = [
+      Query.equal('automation_id', args.automation.id),
+      Query.greaterThanEqual('position', args.startPosition),
+      Query.orderAsc('position'),
+    ]
+    if (args.parentStepId === null) {
+      queries.push(Query.isNull('parent_step_id'))
+    } else {
+      queries.push(Query.equal('parent_step_id', args.parentStepId))
+      queries.push(Query.equal('branch', args.branch ?? 'yes'))
+    }
+    const result = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTIONS.automationSteps,
+      queries
+    )
+    steps = result.documents
+  } catch (err) {
+    await finalizeLog(args.logId, 'failed', err instanceof Error ? err.message : 'fetch failed')
     return
   }
+
   if (!steps || steps.length === 0) {
     if (args.parentStepId === null && args.logId) {
       await finalizeLog(args.logId, 'success', null)
@@ -214,24 +210,27 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
   let status: 'success' | 'partial' | 'failed' = 'success'
   let errorMessage: string | null = null
 
-  for (const step of steps as AutomationStep[]) {
-    // `wait` is the suspension point: enqueue and stop processing this
-    // scope. The cron endpoint will pick it up later.
+  for (const step of steps as unknown as AutomationStep[]) {
     if (step.step_type === 'wait') {
       const cfg = step.step_config as WaitStepConfig
       const ms = waitMs(cfg)
-      await db.from('automation_pending_executions').insert({
-        automation_id: args.automation.id,
-        user_id: args.automation.user_id,
-        contact_id: args.contactId,
-        log_id: args.logId,
-        parent_step_id: args.parentStepId,
-        branch: args.branch,
-        next_step_position: step.position + 1,
-        context: args.context,
-        run_at: new Date(Date.now() + ms).toISOString(),
-        status: 'pending',
-      })
+      await databases.createDocument(
+        DATABASE_ID,
+        COLLECTIONS.automationPendingExecutions,
+        ID.unique(),
+        {
+          automation_id: args.automation.id,
+          user_id: args.automation.user_id,
+          contact_id: args.contactId,
+          log_id: args.logId,
+          parent_step_id: args.parentStepId,
+          branch: args.branch,
+          next_step_position: step.position + 1,
+          context: args.context,
+          run_at: new Date(Date.now() + ms).toISOString(),
+          status: 'pending',
+        }
+      )
       results.push({
         step_id: step.id,
         step_type: step.step_type,
@@ -295,7 +294,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
 }
 
 async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string> {
-  const db = supabaseAdmin()
+  const { databases } = createAdminClient()
 
   switch (step.step_type) {
     case 'send_message': {
@@ -318,10 +317,6 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error('send_template needs a contact')
       if (!cfg.template_name) throw new Error('send_template needs template_name')
       const conversationId = await resolveConversationId(args)
-      // Meta templates use positional {{1}}, {{2}}, … placeholders, so
-      // we MUST emit params in strict numeric order. Lexicographic sort
-      // of "1", "2", …, "10" yields "1", "10", "2", … which silently
-      // scrambles every template with ≥10 variables.
       const params = cfg.variables
         ? Object.keys(cfg.variables)
             .sort((a, b) => {
@@ -350,23 +345,47 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'add_tag': {
       const cfg = step.step_config as TagStepConfig
       if (!args.contactId || !cfg.tag_id) throw new Error('add_tag needs contact + tag_id')
-      await db
-        .from('contact_tags')
-        .upsert(
-          { contact_id: args.contactId, tag_id: cfg.tag_id },
-          { onConflict: 'contact_id,tag_id', ignoreDuplicates: true },
+      try {
+        const existing = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.contactTags,
+          [
+            Query.equal('contact_id', args.contactId),
+            Query.equal('tag_id', cfg.tag_id),
+          ]
         )
+        if (existing.documents.length === 0) {
+          await databases.createDocument(
+            DATABASE_ID,
+            COLLECTIONS.contactTags,
+            ID.unique(),
+            { contact_id: args.contactId, tag_id: cfg.tag_id }
+          )
+        }
+      } catch {
+        // ignore upsert errors
+      }
       return `tag ${cfg.tag_id} added`
     }
 
     case 'remove_tag': {
       const cfg = step.step_config as TagStepConfig
       if (!args.contactId || !cfg.tag_id) throw new Error('remove_tag needs contact + tag_id')
-      await db
-        .from('contact_tags')
-        .delete()
-        .eq('contact_id', args.contactId)
-        .eq('tag_id', cfg.tag_id)
+      try {
+        const existing = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.contactTags,
+          [
+            Query.equal('contact_id', args.contactId),
+            Query.equal('tag_id', cfg.tag_id),
+          ]
+        )
+        for (const doc of existing.documents) {
+          await databases.deleteDocument(DATABASE_ID, COLLECTIONS.contactTags, doc.$id)
+        }
+      } catch {
+        // ignore delete errors
+      }
       return `tag ${cfg.tag_id} removed`
     }
 
@@ -375,19 +394,38 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error('assign_conversation needs a contact')
       let agentId = cfg.agent_id
       if (cfg.mode === 'round_robin') {
-        const { data: profiles } = await db
-          .from('profiles')
-          .select('user_id')
-          .eq('user_id', args.automation.user_id)
-          .limit(1)
-        agentId = profiles?.[0]?.user_id
+        try {
+          const profilesResult = await databases.listDocuments(
+            DATABASE_ID,
+            COLLECTIONS.profiles,
+            [Query.equal('user_id', args.automation.user_id), Query.limit(1)]
+          )
+          agentId = (profilesResult.documents[0] as any)?.user_id
+        } catch {
+          agentId = undefined
+        }
       }
       if (!agentId) return 'no agent resolved'
-      await db
-        .from('conversations')
-        .update({ assigned_agent_id: agentId })
-        .eq('user_id', args.automation.user_id)
-        .eq('contact_id', args.contactId)
+      try {
+        const conversations = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.conversations,
+          [
+            Query.equal('user_id', args.automation.user_id),
+            Query.equal('contact_id', args.contactId),
+          ]
+        )
+        for (const conv of conversations.documents) {
+          await databases.updateDocument(
+            DATABASE_ID,
+            COLLECTIONS.conversations,
+            conv.$id,
+            { assigned_agent_id: agentId }
+          )
+        }
+      } catch {
+        // ignore
+      }
       return `assigned to ${agentId}`
     }
 
@@ -398,25 +436,32 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!allowed.has(cfg.field)) {
         return `field ${cfg.field} not writable from automations`
       }
-      await db
-        .from('contacts')
-        .update({ [cfg.field]: cfg.value, updated_at: new Date().toISOString() })
-        .eq('id', args.contactId)
+      await databases.updateDocument(
+        DATABASE_ID,
+        COLLECTIONS.contacts,
+        args.contactId,
+        { [cfg.field]: cfg.value, updated_at: new Date().toISOString() }
+      )
       return `${cfg.field} updated`
     }
 
     case 'create_deal': {
       const cfg = step.step_config as CreateDealStepConfig
       if (!cfg.pipeline_id || !cfg.stage_id) throw new Error('create_deal needs pipeline + stage')
-      await db.from('deals').insert({
-        user_id: args.automation.user_id,
-        pipeline_id: cfg.pipeline_id,
-        stage_id: cfg.stage_id,
-        contact_id: args.contactId,
-        title: interpolate(cfg.title, args),
-        value: cfg.value ?? 0,
-        status: 'open',
-      })
+      await databases.createDocument(
+        DATABASE_ID,
+        COLLECTIONS.deals,
+        ID.unique(),
+        {
+          user_id: args.automation.user_id,
+          pipeline_id: cfg.pipeline_id,
+          stage_id: cfg.stage_id,
+          contact_id: args.contactId,
+          title: interpolate(cfg.title, args),
+          value: cfg.value ?? 0,
+          status: 'open',
+        }
+      )
       return 'deal created'
     }
 
@@ -435,11 +480,26 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
 
     case 'close_conversation': {
       if (!args.contactId) throw new Error('close_conversation needs a contact')
-      await db
-        .from('conversations')
-        .update({ status: 'closed', updated_at: new Date().toISOString() })
-        .eq('user_id', args.automation.user_id)
-        .eq('contact_id', args.contactId)
+      try {
+        const conversations = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.conversations,
+          [
+            Query.equal('user_id', args.automation.user_id),
+            Query.equal('contact_id', args.contactId),
+          ]
+        )
+        for (const conv of conversations.documents) {
+          await databases.updateDocument(
+            DATABASE_ID,
+            COLLECTIONS.conversations,
+            conv.$id,
+            { status: 'closed', updated_at: new Date().toISOString() }
+          )
+        }
+      } catch {
+        // ignore
+      }
       return 'conversation closed'
     }
 
@@ -463,15 +523,22 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
   const fromCtx = args.context.conversation_id
   if (fromCtx) return fromCtx
   if (!args.contactId) throw new Error('cannot resolve conversation: no contact')
-  const { data, error } = await supabaseAdmin()
-    .from('conversations')
-    .select('id')
-    .eq('user_id', args.automation.user_id)
-    .eq('contact_id', args.contactId)
-    .maybeSingle()
-  if (error) throw new Error(`conversation lookup failed: ${error.message}`)
-  if (!data?.id) throw new Error('no conversation for contact')
-  return data.id as string
+  const { databases } = createAdminClient()
+  try {
+    const result = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTIONS.conversations,
+      [
+        Query.equal('user_id', args.automation.user_id),
+        Query.equal('contact_id', args.contactId),
+        Query.limit(1),
+      ]
+    )
+    if (!result.documents[0]?.$id) throw new Error('no conversation for contact')
+    return result.documents[0].$id
+  } catch (err) {
+    throw new Error(`conversation lookup failed: ${err instanceof Error ? err.message : 'unknown'}`)
+  }
 }
 
 function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {
@@ -488,34 +555,39 @@ function triggerMatches(automation: Automation, ctx: AutomationContext | undefin
 }
 
 async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): Promise<boolean> {
-  const db = supabaseAdmin()
+  const { databases } = createAdminClient()
   switch (cfg.subject) {
     case 'tag_presence': {
       if (!args.contactId || !cfg.operand) return false
-      const { count } = await db
-        .from('contact_tags')
-        .select('id', { count: 'exact', head: true })
-        .eq('contact_id', args.contactId)
-        .eq('tag_id', cfg.operand)
-      return (count ?? 0) > 0
+      try {
+        const result = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.contactTags,
+          [
+            Query.equal('contact_id', args.contactId),
+            Query.equal('tag_id', cfg.operand),
+          ]
+        )
+        return result.documents.length > 0
+      } catch {
+        return false
+      }
     }
     case 'contact_field': {
       if (!args.contactId || !cfg.operand) return false
-      const { data } = await db
-        .from('contacts')
-        .select(cfg.operand)
-        .eq('id', args.contactId)
-        .maybeSingle()
-      const v = (data as Record<string, unknown> | null)?.[cfg.operand]
-      return v != null && String(v) === String(cfg.value ?? '')
+      try {
+        const contact = await databases.getDocument(DATABASE_ID, COLLECTIONS.contacts, args.contactId)
+        const v = (contact as any)[cfg.operand]
+        return v != null && String(v) === String(cfg.value ?? '')
+      } catch {
+        return false
+      }
     }
     case 'message_content': {
       const text = (args.context.message_text ?? '').toString()
       return text.toLowerCase().includes((cfg.value ?? '').toLowerCase())
     }
     case 'time_of_day': {
-      // operand form "HH:mm-HH:mm" — true if now is within that window
-      // (supports over-midnight ranges like "18:00-09:00").
       const [from, to] = (cfg.operand ?? '').split('-')
       if (!from || !to) return false
       const now = new Date()
@@ -554,23 +626,18 @@ async function appendResults(
   errorMessage: string | null,
 ) {
   if (!logId) return
-  const db = supabaseAdmin()
-  const { data: existing } = await db
-    .from('automation_logs')
-    .select('steps_executed, status')
-    .eq('id', logId)
-    .single()
-  const merged = [
-    ...((existing?.steps_executed as AutomationLogStepResult[] | undefined) ?? []),
-    ...newItems,
-  ]
-  const update: Record<string, unknown> = { steps_executed: merged }
-  // Only overwrite status on the outermost scope — nested branches pass null.
-  if (status !== null) {
-    update.status = status
+  const { databases } = createAdminClient()
+  try {
+    const log = await databases.getDocument(DATABASE_ID, COLLECTIONS.automationLogs, logId)
+    const existingSteps = (log as any).steps_executed as AutomationLogStepResult[] | undefined
+    const merged = [...(existingSteps ?? []), ...newItems]
+    const update: Record<string, unknown> = { steps_executed: merged }
+    if (status !== null) update.status = status
+    if (errorMessage) update.error_message = errorMessage
+    await databases.updateDocument(DATABASE_ID, COLLECTIONS.automationLogs, logId, update)
+  } catch {
+    // ignore append errors
   }
-  if (errorMessage) update.error_message = errorMessage
-  await db.from('automation_logs').update(update).eq('id', logId)
 }
 
 async function finalizeLog(
@@ -579,15 +646,22 @@ async function finalizeLog(
   errorMessage: string | null,
 ) {
   if (!logId) return
-  await supabaseAdmin()
-    .from('automation_logs')
-    .update({ status, error_message: errorMessage })
-    .eq('id', logId)
+  const { databases } = createAdminClient()
+  try {
+    await databases.updateDocument(DATABASE_ID, COLLECTIONS.automationLogs, logId, {
+      status,
+      error_message: errorMessage,
+    })
+  } catch {
+    // ignore finalize errors
+  }
 }
 
 async function markPending(id: string, status: 'done' | 'failed') {
-  await supabaseAdmin()
-    .from('automation_pending_executions')
-    .update({ status })
-    .eq('id', id)
+  const { databases } = createAdminClient()
+  try {
+    await databases.updateDocument(DATABASE_ID, COLLECTIONS.automationPendingExecutions, id, { status })
+  } catch {
+    // ignore
+  }
 }

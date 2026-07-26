@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { databases, account } from "@/lib/appwrite/client";
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
+import { Query } from "appwrite";
 import type { Pipeline, PipelineStage, Deal } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
 import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
@@ -37,8 +39,6 @@ const SPEC_DEFAULT_STAGES = [
 ];
 
 export default function PipelinesPage() {
-  const supabase = createClient();
-
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
   const [stages, setStages] = useState<PipelineStage[]>([]);
@@ -61,69 +61,87 @@ export default function PipelinesPage() {
   const seedAttempted = useRef(false);
 
   const loadPipelines = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("pipelines")
-      .select("*")
-      .order("created_at");
-    if (error) {
-      console.error("Failed to load pipelines:", error.message);
+    try {
+      const { documents } = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.pipelines,
+        [Query.orderAsc("created_at")]
+      );
+      return (documents ?? []) as unknown as Pipeline[];
+    } catch (error) {
+      console.error("Failed to load pipelines:", error);
       return [];
     }
-    return data ?? [];
-  }, [supabase]);
+  }, []);
 
   const loadStages = useCallback(
     async (pipelineId: string) => {
-      const { data } = await supabase
-        .from("pipeline_stages")
-        .select("*")
-        .eq("pipeline_id", pipelineId)
-        .order("position");
-      return data ?? [];
+      try {
+        const { documents } = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.pipelineStages,
+          [Query.equal("pipeline_id", pipelineId), Query.orderAsc("position")]
+        );
+        return (documents ?? []) as unknown as PipelineStage[];
+      } catch {
+        return [];
+      }
     },
-    [supabase],
+    [],
   );
 
   const loadDeals = useCallback(
     async (pipelineId: string) => {
-      const { data } = await supabase
-        .from("deals")
-        .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
-        .eq("pipeline_id", pipelineId)
-        .order("created_at", { ascending: false });
-      return (data ?? []) as Deal[];
+      try {
+        const { documents } = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.deals,
+          [Query.equal("pipeline_id", pipelineId), Query.orderDesc("created_at")]
+        );
+        return (documents ?? []) as unknown as Deal[];
+      } catch {
+        return [];
+      }
     },
-    [supabase],
+    [],
   );
 
   const seedDefaultPipeline = useCallback(async (): Promise<Pipeline | null> => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
+    let user;
+    try {
+      user = await account.get();
+    } catch {
+      return null;
+    }
     if (!user) return null;
 
-    const { data: pipeline, error } = await supabase
-      .from("pipelines")
-      .insert({ user_id: user.id, name: "Sales Pipeline" })
-      .select()
-      .single();
-
-    if (error || !pipeline) {
-      console.error("Failed to seed pipeline:", error?.message);
+    let pipeline;
+    try {
+      pipeline = await databases.createDocument(
+        DATABASE_ID,
+        COLLECTIONS.pipelines,
+        "unique()",
+        { user_id: user.$id, name: "Sales Pipeline" }
+      );
+    } catch (error) {
+      console.error("Failed to seed pipeline:", error);
       return null;
     }
 
     const stagesPayload = SPEC_DEFAULT_STAGES.map((s) => ({
-      pipeline_id: pipeline.id,
+      pipeline_id: pipeline.$id,
       name: s.name,
       color: s.color,
       position: s.position,
     }));
-    await supabase.from("pipeline_stages").insert(stagesPayload);
+    await Promise.all(
+      stagesPayload.map((s) =>
+        databases.createDocument(DATABASE_ID, COLLECTIONS.pipelineStages, "unique()", s)
+      )
+    );
 
-    return pipeline as Pipeline;
-  }, [supabase]);
+    return { ...pipeline, id: pipeline.$id } as unknown as Pipeline;
+  }, []);
 
   // Initial load + seed-if-empty
   useEffect(() => {
@@ -205,16 +223,16 @@ export default function PipelinesPage() {
       setDeals((prev) =>
         prev.map((d) => (d.id === dealId ? { ...d, stage_id: newStageId } : d)),
       );
-      const { error } = await supabase
-        .from("deals")
-        .update({ stage_id: newStageId })
-        .eq("id", dealId);
-      if (error) {
+      try {
+        await databases.updateDocument(DATABASE_ID, COLLECTIONS.deals, dealId, {
+          stage_id: newStageId,
+        });
+      } catch {
         toast.error("Failed to move deal");
         refreshDeals();
       }
     },
-    [supabase, refreshDeals],
+    [refreshDeals],
   );
 
   const handleAddDeal = useCallback(
@@ -237,38 +255,47 @@ export default function PipelinesPage() {
     if (!name) return;
     setCreating(true);
 
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
+    let user;
+    try {
+      user = await account.get();
+    } catch {
+      setCreating(false);
+      return;
+    }
     if (!user) {
       setCreating(false);
       return;
     }
 
-    const { data: pipeline, error } = await supabase
-      .from("pipelines")
-      .insert({ user_id: user.id, name })
-      .select()
-      .single();
-
-    if (error || !pipeline) {
+    let pipeline;
+    try {
+      pipeline = await databases.createDocument(
+        DATABASE_ID,
+        COLLECTIONS.pipelines,
+        "unique()",
+        { user_id: user.$id, name }
+      );
+    } catch {
       toast.error("Failed to create pipeline");
       setCreating(false);
       return;
     }
 
     const stagesPayload = SPEC_DEFAULT_STAGES.map((s) => ({
-      pipeline_id: pipeline.id,
+      pipeline_id: pipeline.$id,
       name: s.name,
       color: s.color,
       position: s.position,
     }));
-    await supabase.from("pipeline_stages").insert(stagesPayload);
+    await Promise.all(
+      stagesPayload.map((s) =>
+        databases.createDocument(DATABASE_ID, COLLECTIONS.pipelineStages, "unique()", s)
+      )
+    );
 
     setNewPipelineName("");
     setNewPipelineOpen(false);
-    setSelectedPipelineId(pipeline.id);
+    setSelectedPipelineId(pipeline.$id);
     await refreshPipelines();
     setCreating(false);
     toast.success("Pipeline created");

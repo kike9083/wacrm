@@ -1,19 +1,10 @@
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/automations/admin-client'
+import { createAdminClient } from '@/lib/appwrite/server'
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+import { Query } from 'node-appwrite'
 import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
 
-/**
- * Drain due `automation_pending_executions` rows. Meant to be hit
- * on a schedule (Vercel Cron / external pinger) — requires a shared
- * secret via the `x-cron-secret` header to match
- * `AUTOMATION_CRON_SECRET`.
- *
- * The claim step (status = 'running') serves as a simple lock so
- * overlapping invocations don't double-process rows. Best-effort
- * only; expensive SELECT ... FOR UPDATE is avoided in favor of a
- * two-step UPDATE-by-id.
- */
 export async function GET(request: Request) {
   const expected = process.env.AUTOMATION_CRON_SECRET
   if (!expected) {
@@ -24,31 +15,42 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const admin = supabaseAdmin()
-  const { data: due, error } = await admin
-    .from('automation_pending_executions')
-    .select('*')
-    .eq('status', 'pending')
-    .lte('run_at', new Date().toISOString())
-    .order('run_at', { ascending: true })
-    .limit(50)
+  const { databases } = createAdminClient()
+  let due
+  try {
+    const result = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTIONS.automationPendingExecutions,
+      [
+        Query.equal('status', 'pending'),
+        Query.lessThanEqual('run_at', new Date().toISOString()),
+        Query.orderAsc('run_at'),
+        Query.limit(50),
+      ]
+    )
+    due = result.documents
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'unknown error'
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!due || due.length === 0) return NextResponse.json({ processed: 0 })
 
   let processed = 0
   for (const row of due) {
-    const { data: claim } = await admin
-      .from('automation_pending_executions')
-      .update({ status: 'running' })
-      .eq('id', row.id)
-      .eq('status', 'pending')
-      .select('id')
-      .maybeSingle()
-    if (!claim) continue
+    try {
+      await databases.updateDocument(
+        DATABASE_ID,
+        COLLECTIONS.automationPendingExecutions,
+        row.$id,
+        { status: 'running' }
+      )
+    } catch {
+      continue
+    }
 
     await resumePendingExecution({
-      id: row.id as string,
+      id: row.$id as string,
       automation_id: row.automation_id as string,
       user_id: row.user_id as string,
       contact_id: (row.contact_id as string | null) ?? null,
