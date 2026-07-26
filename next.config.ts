@@ -45,7 +45,7 @@ const SECURITY_HEADERS = [
       "font-src 'self' data:",
       // Supabase REST + realtime (WSS). All Meta API calls happen
       // server-side, so graph.facebook.com does not belong here.
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+      "connect-src 'self' https://varios-appwrite-techpadah.fjueze.easypanel.host wss://varios-appwrite-techpadah.fjueze.easypanel.host",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
