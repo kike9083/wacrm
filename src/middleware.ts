@@ -41,7 +41,7 @@ export async function middleware(request: NextRequest) {
   }
 
   if (!user && request.nextUrl.pathname.startsWith('/api/whatsapp/') &&
-      !request.nextUrl.pathname.includes('/webhook')) {
+      !request.nextUrl.pathname.startsWith('/api/whatsapp/evolution-webhook')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
