@@ -602,8 +602,9 @@ async function processEvolutionWebhook(
 ) {
   const { event, instance, data } = payload
   const instanceName = instance || process.env.EVOLUTION_INSTANCE_NAME || 'default'
+  const normalizedEvent = event.toUpperCase()
 
-  switch (event) {
+  switch (normalizedEvent) {
     case 'MESSAGES_UPSERT': {
       const fromMe = isFromMe(data)
       console.log(`[evolution-webhook] MESSAGES_UPSERT fromMe=${fromMe} instance=${instanceName}`)
