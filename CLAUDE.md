@@ -309,3 +309,9 @@ npm run lint         # ESLint
 ---
 
 *V4: Todo es un Skill. Agent-First. El usuario habla, tu construyes.*
+
+---
+
+## Easypanel
+MCP server vía `easypanel-mcp-server` (helbertparanhos). Auto-detecta tRPC/RPC.
+Panel: `fjueze.easypanel.host` | Proyectos CRM → services con prefijo `wacrm-` | Apps existentes: Evolution API (`evolution-*`)

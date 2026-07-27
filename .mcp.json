@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "easypanel": {
+      "command": "npx",
+      "args": ["-y", "easypanel-mcp-server"],
+      "env": {
+        "EASYPANEL_URL": "https://fjueze.easypanel.host",
+        "EASYPANEL_TOKEN": "76939012c53c2ac59762c16214501bbec0707c150db6a6828334dfd3c56d0358"
+      }
+    }
+  }
+}
