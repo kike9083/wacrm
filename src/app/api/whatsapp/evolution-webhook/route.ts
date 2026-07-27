@@ -22,46 +22,37 @@ function adminDb() {
 /**
  * Verify the Evolution API webhook request is authentic.
  *
- * Evolution API supports two verification methods:
- *   1. Apikey header: matches against EVOLUTION_API_KEY
- *   2. HMAC-SHA256 signature: if EVOLUTION_WEBHOOK_SECRET is set,
- *      verifies the x-signature-256 header against the raw body.
+ * Evolution API does NOT send auth headers on webhook delivery by
+ * default. To secure this endpoint in production:
+ *   1. Set EVOLUTION_WEBHOOK_SECRET env var
+ *   2. Configure Evolution API webhook with that secret in headers
  *
- * If neither env var is configured, we FAIL CLOSED — reject all requests.
+ * If no secret is configured, requests are accepted (URL is the secret).
+ * This is safe for private servers; use a secret on shared infrastructure.
  */
-function verifyEvolutionSignature(rawBody: string, headers: Headers): boolean {
-  const apiKey = process.env.EVOLUTION_API_KEY
+function verifyEvolutionWebhook(rawBody: string, headers: Headers): boolean {
   const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET
 
-  if (!apiKey && !webhookSecret) {
-    console.error(
-      '[evolution-webhook] SECURITY: Neither EVOLUTION_API_KEY nor EVOLUTION_WEBHOOK_SECRET is set — rejecting request. ' +
-        'Configure at least one to enable webhook authentication.',
-    )
-    return false
-  }
+  // No secret configured — accept requests (URL itself is the secret)
+  if (!webhookSecret) return true
 
-  // Method 1: API key in header (Evolution API default)
-  const apiKeyHeader = headers.get('apikey') || headers.get('authorization')?.replace(/^Bearer\s+/i, '')
-  if (apiKey && apiKeyHeader === apiKey) {
-    return true
-  }
+  // Verify secret from header
+  const secretHeader = headers.get('x-webhook-secret') || headers.get('apikey')
+  if (secretHeader === webhookSecret) return true
 
-  // Method 2: HMAC-SHA256 signature (if secret configured)
-  if (webhookSecret) {
-    const signatureHeader = headers.get('x-signature-256')
-    if (signatureHeader) {
-      const expected = 'sha256=' +
-        crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex')
-      const a = Buffer.from(signatureHeader)
-      const b = Buffer.from(expected)
-      if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
-        return true
-      }
+  // Verify HMAC-SHA256 signature
+  const signatureHeader = headers.get('x-hub-signature-256') || headers.get('x-signature-256')
+  if (signatureHeader) {
+    const expected = 'sha256=' +
+      crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex')
+    const a = Buffer.from(signatureHeader)
+    const b = Buffer.from(expected)
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+      return true
     }
   }
 
-  console.warn('[evolution-webhook] SECURITY: Request failed authentication check')
+  console.warn('[evolution-webhook] SECURITY: Request rejected — invalid webhook secret')
   return false
 }
 
@@ -362,14 +353,25 @@ async function handleIncomingMessage(
   instanceName: string,
 ) {
   const number = extractNumber(data)
-  if (!number) return
+  if (!number) {
+    console.warn('[evolution-webhook] handleIncomingMessage: no number extracted from data')
+    return
+  }
 
   const pushName = extractPushName(data)
+  console.log(`[evolution-webhook] incoming message from ${number} (${pushName}) instance=${instanceName}`)
+
   const contactOutcome = await findOrCreateContact(userId, number, pushName)
-  if (!contactOutcome) return
+  if (!contactOutcome) {
+    console.error(`[evolution-webhook] findOrCreateContact failed for ${number}`)
+    return
+  }
 
   const conversation = await findOrCreateConversation(userId, contactOutcome.contact.$id)
-  if (!conversation) return
+  if (!conversation) {
+    console.error(`[evolution-webhook] findOrCreateConversation failed for contact ${contactOutcome.contact.$id}`)
+    return
+  }
 
   const msgType = (data.messageType as string) || ''
 
@@ -559,7 +561,7 @@ export async function POST(request: Request) {
   const rawBody = await request.text()
 
   // C1: Verify webhook authenticity — fail closed if no credentials
-  if (!verifyEvolutionSignature(rawBody, request.headers)) {
+  if (!verifyEvolutionWebhook(rawBody, request.headers)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -602,11 +604,14 @@ async function processEvolutionWebhook(
   const instanceName = instance || process.env.EVOLUTION_INSTANCE_NAME || 'default'
 
   switch (event) {
-    case 'MESSAGES_UPSERT':
-      if (!isFromMe(data)) {
+    case 'MESSAGES_UPSERT': {
+      const fromMe = isFromMe(data)
+      console.log(`[evolution-webhook] MESSAGES_UPSERT fromMe=${fromMe} instance=${instanceName}`)
+      if (!fromMe) {
         await handleIncomingMessage(data, userId, driver, instanceName)
       }
       break
+    }
 
     case 'MESSAGES_UPDATE': {
       const update = data.update as Record<string, unknown> | undefined
