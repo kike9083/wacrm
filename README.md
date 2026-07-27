@@ -97,6 +97,71 @@ rather than here. Details in
 [`CONTRIBUTING.md`](./CONTRIBUTING.md) and
 [`.github/SECURITY.md`](./.github/SECURITY.md).
 
+## Engram Cloud (Memory Sync)
+
+Engram provides persistent memory for AI coding agents across sessions.
+This project uses a self-hosted Engram Cloud instance for cross-machine memory sync.
+
+### Server (already configured)
+
+- **URL**: `https://engram-cloud-engram-cloud.fjueze.easypanel.host`
+- **Project**: `wacrm`
+- **Dashboard**: `https://engram-cloud-engram-cloud.fjueze.easypanel.host/dashboard`
+
+### Client setup (new machine)
+
+```powershell
+# 1. Configure the cloud server
+engram cloud config --server https://engram-cloud-engram-cloud.fjueze.easypanel.host
+
+# 2. Set the auth token (persist permanently)
+[Environment]::SetEnvironmentVariable("ENGRAM_CLOUD_TOKEN", "<token>", "User")
+
+# 3. Enroll this project
+engram cloud enroll wacrm
+
+# 4. First sync
+engram sync --cloud --project wacrm
+```
+
+### Daily usage
+
+```powershell
+# Sync after a work session
+engram sync --cloud --project wacrm
+
+# Import from cloud on a fresh clone
+engram sync --cloud --import --project wacrm
+
+# Check sync status
+engram sync --cloud --status --project wacrm
+```
+
+### Enrolled projects
+
+All projects are synced to the cloud:
+
+| Project | Observations |
+|---------|--------------|
+| wacrm | 2 |
+| grupo-ecotech | 28 |
+| teachpadah-landingpage-1 | 20 |
+| pago_prestamos | 10 |
+| business-os-new | 7 |
+| leonard-seguros | 5 |
+| agente-omnicanal | 4 |
+| omni-crm | 3 |
+| sidebar-gemini | 3 |
+
+To sync a new project:
+
+```powershell
+engram cloud enroll <project-name>
+engram sync --cloud --project <project-name>
+```
+
+> Local SQLite remains the source of truth. Cloud is opt-in replication only.
+
 ## License
 
 [MIT](./LICENSE). Fork it, brand it, host it.
