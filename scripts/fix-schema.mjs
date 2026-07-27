@@ -41,10 +41,18 @@ async function addAttribute(collectionId, key, type, size) {
 async function main() {
   const fixes = [
     ['conversations', 'created_at', 'string', 50],
+    ['conversations', 'last_message_text', 'string', 4096],
+    ['conversations', 'updated_at', 'string', 50],
     ['contacts', 'created_at', 'string', 50],
     ['deals', 'status', 'string', 50],
     ['deals', 'updated_at', 'string', 50],
     ['messages', 'sender_type', 'string', 50],
+    ['messages', 'content_type', 'string', 50],
+    ['messages', 'content_text', 'string', 4096],
+    ['messages', 'message_id', 'string', 255],
+    ['messages', 'interactive_reply_id', 'string', 255],
+    ['messages', 'media_url', 'string', 2048],
+    ['messages', 'updated_at', 'string', 50],
     ['broadcasts', 'created_at', 'string', 50],
     ['automation_logs', 'created_at', 'string', 50],
     ['profiles', 'email', 'string', 255],

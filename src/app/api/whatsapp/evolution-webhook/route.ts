@@ -2,11 +2,14 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
+import type { Models } from 'node-appwrite'
 import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils'
 import { createDriver } from '@/lib/whatsapp/driver'
 import type { WhatsAppDriver } from '@/lib/whatsapp/types'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import crypto from 'node:crypto'
 
 let _admin: ReturnType<typeof createAdminClient> | null = null
 function adminDb() {
@@ -14,6 +17,52 @@ function adminDb() {
     _admin = createAdminClient()
   }
   return _admin.databases
+}
+
+/**
+ * Verify the Evolution API webhook request is authentic.
+ *
+ * Evolution API supports two verification methods:
+ *   1. Apikey header: matches against EVOLUTION_API_KEY
+ *   2. HMAC-SHA256 signature: if EVOLUTION_WEBHOOK_SECRET is set,
+ *      verifies the x-signature-256 header against the raw body.
+ *
+ * If neither env var is configured, we FAIL CLOSED — reject all requests.
+ */
+function verifyEvolutionSignature(rawBody: string, headers: Headers): boolean {
+  const apiKey = process.env.EVOLUTION_API_KEY
+  const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET
+
+  if (!apiKey && !webhookSecret) {
+    console.error(
+      '[evolution-webhook] SECURITY: Neither EVOLUTION_API_KEY nor EVOLUTION_WEBHOOK_SECRET is set — rejecting request. ' +
+        'Configure at least one to enable webhook authentication.',
+    )
+    return false
+  }
+
+  // Method 1: API key in header (Evolution API default)
+  const apiKeyHeader = headers.get('apikey') || headers.get('authorization')?.replace(/^Bearer\s+/i, '')
+  if (apiKey && apiKeyHeader === apiKey) {
+    return true
+  }
+
+  // Method 2: HMAC-SHA256 signature (if secret configured)
+  if (webhookSecret) {
+    const signatureHeader = headers.get('x-signature-256')
+    if (signatureHeader) {
+      const expected = 'sha256=' +
+        crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex')
+      const a = Buffer.from(signatureHeader)
+      const b = Buffer.from(expected)
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+        return true
+      }
+    }
+  }
+
+  console.warn('[evolution-webhook] SECURITY: Request failed authentication check')
+  return false
 }
 
 type EvolutionEvent =
@@ -192,18 +241,24 @@ async function handleEvolutionMedia(
   return { type: 'image', contentText: caption || null, mediaUrl: `/api/whatsapp/media/${media.id}`, interactiveReplyId: null }
 }
 
-async function findOrCreateContact(userId: string, phone: string, name: string) {
-  let contactsResult
+async function findOrCreateContact(userId: string, phone: string, name: string): Promise<{ contact: Models.Document; wasCreated: boolean } | null> {
+  const normalized = normalizePhone(phone)
+
+  // Query by phone directly — avoids loading all contacts into memory.
+  let existing: Models.Document | null = null
   try {
-    contactsResult = await adminDb().listDocuments(DATABASE_ID, COLLECTIONS.contacts, [
+    const result = await adminDb().listDocuments(DATABASE_ID, COLLECTIONS.contacts, [
       Query.equal('user_id', userId),
+      Query.equal('phone', normalized),
+      Query.limit(1),
     ])
+    existing = result.documents[0] ?? null
   } catch {
-    return null
+    // Fall through to create
   }
-  const existing = contactsResult.documents.find((c: any) => phonesMatch(c.phone, phone))
+
   if (existing) {
-    if (name && name !== existing.name) {
+    if (name && name !== (existing as any).name) {
       try {
         await adminDb().updateDocument(DATABASE_ID, COLLECTIONS.contacts, existing.$id, {
           name,
@@ -213,11 +268,12 @@ async function findOrCreateContact(userId: string, phone: string, name: string) 
     }
     return { contact: existing, wasCreated: false }
   }
+
   try {
     const newContact = await adminDb().createDocument(DATABASE_ID, COLLECTIONS.contacts, ID.unique(), {
       user_id: userId,
-      phone,
-      name: name || phone,
+      phone: normalized,
+      name: name || normalized,
     })
     return { contact: newContact, wasCreated: true }
   } catch {
@@ -501,6 +557,17 @@ async function handleReactionMessage(data: Record<string, unknown>, userId: stri
 
 export async function POST(request: Request) {
   const rawBody = await request.text()
+
+  // C1: Verify webhook authenticity — fail closed if no credentials
+  if (!verifyEvolutionSignature(rawBody, request.headers)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // Rate limit: 300 requests/min per IP (webhooks can be bursty)
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
+  const rl = checkRateLimit(`evolution-webhook:${ip}`, { limit: 300, windowMs: 60_000 })
+  if (!rl.success) return rateLimitResponse(rl)
+
   let payload: EvolutionWebhookPayload
   try {
     payload = JSON.parse(rawBody)
@@ -512,19 +579,11 @@ export async function POST(request: Request) {
     instanceName: payload.instance || process.env.EVOLUTION_INSTANCE_NAME || 'default',
   })
 
-  let userId = process.env.EVOLUTION_USER_ID
+  const userId = process.env.EVOLUTION_USER_ID
   if (!userId) {
-    try {
-      const profiles = await adminDb().listDocuments(DATABASE_ID, COLLECTIONS.profiles, [Query.limit(1)])
-      userId = (profiles.documents[0]?.user_id || profiles.documents[0]?.$id) ?? undefined
-    } catch {
-      userId = undefined
-    }
-  }
-
-  if (!userId) {
-    console.error('[evolution-webhook] no userId configured — set EVOLUTION_USER_ID env var')
-    return NextResponse.json({ error: 'No user configured' }, { status: 500 })
+    // C2: Never fall back to first profile — require explicit config
+    console.error('[evolution-webhook] EVOLUTION_USER_ID not set — cannot process webhook')
+    return NextResponse.json({ error: 'EVOLUTION_USER_ID not configured' }, { status: 500 })
   }
 
   void processEvolutionWebhook(payload, userId, driver).catch((err) => {
