@@ -346,7 +346,7 @@ async function handleIncomingMessage(
     message: interactiveReplyId
       ? { kind: 'interactive_reply', reply_id: interactiveReplyId, reply_title: contentText ?? '', meta_message_id: msgId }
       : { kind: 'text', text: contentText ?? '', meta_message_id: msgId },
-    isFirstInbound,
+    isFirstInboundMessage: isFirstInbound,
   })
 
   const triggers: string[] = []
@@ -421,7 +421,8 @@ async function handleStatusUpdate(data: Record<string, unknown>) {
 async function handleReactionMessage(data: Record<string, unknown>, userId: string) {
   const rawMessage = data.message as Record<string, unknown> | undefined
   const react = rawMessage?.reactionMessage as Record<string, unknown> | undefined
-  if (!react?.key?.id || !react?.text) return
+  const reactKey = react?.key as Record<string, unknown> | undefined
+  if (!reactKey?.id || !react?.text) return
 
   const number = extractNumber(data)
   const msgId = extractMessageId(data)
@@ -450,7 +451,7 @@ async function handleReactionMessage(data: Record<string, unknown>, userId: stri
   const conv = convs?.documents[0]
   if (!conv) return
 
-  const targetMsgId = react.key.id as string
+  const targetMsgId = reactKey?.id as string
   let targetMsgs
   try {
     targetMsgs = await adminDb().listDocuments(DATABASE_ID, COLLECTIONS.messages, [
@@ -515,9 +516,9 @@ export async function POST(request: Request) {
   if (!userId) {
     try {
       const profiles = await adminDb().listDocuments(DATABASE_ID, COLLECTIONS.profiles, [Query.limit(1)])
-      userId = profiles.documents[0]?.user_id || profiles.documents[0]?.$id || null
+      userId = (profiles.documents[0]?.user_id || profiles.documents[0]?.$id) ?? undefined
     } catch {
-      userId = null
+      userId = undefined
     }
   }
 
