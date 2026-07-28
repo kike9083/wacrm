@@ -5,6 +5,7 @@ import { DOW_SHORT_MON_FIRST } from '@/lib/dashboard/date-utils'
 import type { ResponseTimeSummary } from '@/lib/dashboard/types'
 import { EmptyState } from './empty-state'
 import { Skeleton } from './skeleton'
+import { useTranslation } from 'react-i18next'
 
 interface ResponseTimeChartProps {
   data: ResponseTimeSummary | null
@@ -22,6 +23,7 @@ export function ResponseTimeChart({
   loading,
   thresholdMinutes = 5,
 }: ResponseTimeChartProps) {
+  const { t } = useTranslation()
   const hasData = data?.buckets.some((b) => b.avgMinutes != null) ?? false
 
   return (
@@ -29,23 +31,22 @@ export function ResponseTimeChart({
       <header className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
         <div>
           <h2 className="text-sm font-semibold text-white">
-            Average First Response Time
+            {t('dashboard.responseTimeChart.title')}
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            Minutes to reply to a customer&apos;s first unreplied message, by
-            weekday
+            {t('dashboard.responseTimeChart.subtitle')}
           </p>
         </div>
         {data && (data.thisWeekAvg != null || data.lastWeekAvg != null) && (
           <div className="text-right text-xs">
             <div className="text-slate-400">
-              This week:{' '}
+              {t('dashboard.responseTimeChart.thisWeek')}{' '}
               <span className="font-medium text-white tabular-nums">
                 {fmt(data.thisWeekAvg)}
               </span>
             </div>
             <div className="text-slate-500">
-              Last week:{' '}
+              {t('dashboard.responseTimeChart.lastWeek')}{' '}
               <span className="tabular-nums">{fmt(data.lastWeekAvg)}</span>
             </div>
           </div>
@@ -58,11 +59,11 @@ export function ResponseTimeChart({
         ) : !hasData ? (
           <EmptyState
             icon={Clock}
-            title="No replies recorded yet"
-            hint="This chart fills in as you reply to customer messages."
+            title={t('dashboard.responseTimeChart.noReplies')}
+            hint={t('dashboard.responseTimeChart.noRepliesHint')}
           />
         ) : (
-          <Bars data={data} thresholdMinutes={thresholdMinutes} />
+          <Bars data={data} thresholdMinutes={thresholdMinutes} t={t} />
         )}
       </div>
     </section>
@@ -72,9 +73,11 @@ export function ResponseTimeChart({
 function Bars({
   data,
   thresholdMinutes,
+  t,
 }: {
   data: ResponseTimeSummary
   thresholdMinutes: number
+  t: (key: string) => string
 }) {
   const chartW = VB_W - PADDING.left - PADDING.right
   const chartH = VB_H - PADDING.top - PADDING.bottom
@@ -138,7 +141,7 @@ function Bars({
             textAnchor="end"
             className="fill-rose-300 text-[10px]"
           >
-            target {thresholdMinutes}m
+            {t('dashboard.responseTimeChart.target')} {thresholdMinutes}m
           </text>
         </g>
       )}
@@ -163,7 +166,7 @@ function Bars({
             >
               <title>
                 {DOW_SHORT_MON_FIRST[i]}:{' '}
-                {b.avgMinutes == null ? 'no samples' : `${b.avgMinutes.toFixed(1)} min avg`}
+                {b.avgMinutes == null ? t('dashboard.responseTimeChart.noSamples') : `${b.avgMinutes.toFixed(1)} min avg`}
                 {b.samples > 0 ? ` (${b.samples} sample${b.samples === 1 ? '' : 's'})` : ''}
               </title>
             </rect>

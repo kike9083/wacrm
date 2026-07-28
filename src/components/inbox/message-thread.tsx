@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { databases, client } from "@/lib/appwrite/client";
 import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
 import { Query } from "appwrite";
@@ -91,10 +92,10 @@ interface MessageThreadProps {
   onRefresh?: () => void;
 }
 
-function formatDateSeparator(dateStr: string): string {
+function formatDateSeparator(dateStr: string, t: (key: string) => string): string {
   const date = new Date(dateStr);
-  if (isToday(date)) return "Today";
-  if (isYesterday(date)) return "Yesterday";
+  if (isToday(date)) return t('inbox.today');
+  if (isYesterday(date)) return t('inbox.yesterday');
   return format(date, "MMMM d, yyyy");
 }
 
@@ -116,9 +117,9 @@ function groupMessagesByDate(messages: Message[]) {
 }
 
 const STATUS_OPTIONS: { label: string; value: ConversationStatus; color: string }[] = [
-  { label: "Open", value: "open", color: "text-primary" },
-  { label: "Pending", value: "pending", color: "text-amber-400" },
-  { label: "Closed", value: "closed", color: "text-slate-400" },
+  { label: "open", value: "open", color: "text-primary" },
+  { label: "pending", value: "pending", color: "text-amber-400" },
+  { label: "closed", value: "closed", color: "text-slate-400" },
 ];
 
 /**
@@ -146,6 +147,7 @@ export function MessageThread({
   resyncToken = 0,
   onRefresh,
 }: MessageThreadProps) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -210,23 +212,23 @@ export function MessageThread({
       .reverse()
       .find((m) => m.sender_type === "customer");
 
-    if (!lastCustomerMsg) return { expired: true, remaining: "No customer messages" };
+    if (!lastCustomerMsg) return { expired: true, remaining: t('inbox.noCustomerMessages') };
 
     const hoursSince = differenceInHours(new Date(), new Date(lastCustomerMsg.created_at));
     const expired = hoursSince >= 24;
 
     if (expired) {
-      return { expired: true, remaining: "Expired" };
+      return { expired: true, remaining: t('inbox.expired') };
     }
 
     const hoursLeft = 24 - hoursSince;
     const remaining =
       hoursLeft >= 1
-        ? `${Math.floor(hoursLeft)}h remaining`
-        : `${Math.floor(hoursLeft * 60)}m remaining`;
+        ? `${Math.floor(hoursLeft)}h ${t('inbox.remaining')}`
+        : `${Math.floor(hoursLeft * 60)}m ${t('inbox.remaining')}`;
 
     return { expired, remaining };
-  }, [messages]);
+  }, [messages, t]);
 
   // Store latest callback in a ref so fetchMessages doesn't need to
   // depend on `onMessagesLoaded` — otherwise parent re-renders cause
@@ -444,7 +446,7 @@ export function MessageThread({
         if (!res.ok) {
           const reason = payload?.error || `HTTP ${res.status}`;
           console.error("Failed to send message:", reason);
-          toast.error(`Failed to send: ${reason}`);
+          toast.error(`${t('inbox.failedToSend')}: ${reason}`);
           // Mark the optimistic bubble as failed so the user sees what happened
           onUpdateMessage(tempId, { status: "failed" });
           return;
@@ -521,7 +523,7 @@ export function MessageThread({
         if (!res.ok) {
           const reason = payload?.error || `HTTP ${res.status}`;
           console.error("Failed to send template:", reason);
-          toast.error(`Failed to send template: ${reason}`);
+          toast.error(`${t('inbox.failedToSendTemplate')}: ${reason}`);
           onUpdateMessage(tempId, { status: "failed" });
           return;
         }
@@ -556,7 +558,7 @@ export function MessageThread({
     return map;
   }, [reactions]);
 
-  const contactDisplayName = contact?.name || contact?.phone || "Customer";
+  const contactDisplayName = contact?.name || contact?.phone || t('inbox.customer');
 
   // Author label for a quoted message: "You" when we sent the parent,
   // contact name when the customer sent it.
@@ -564,9 +566,9 @@ export function MessageThread({
     (m: Message): string => {
       const isAgentMsg =
         m.sender_type === "agent" || m.sender_type === "bot";
-      return isAgentMsg ? "You" : contactDisplayName;
+      return isAgentMsg ? t('inbox.you') : contactDisplayName;
     },
-    [contactDisplayName],
+    [contactDisplayName, t],
   );
 
   const handleStartReply = useCallback(
@@ -591,7 +593,7 @@ export function MessageThread({
         return;
       }
       if (messageId.startsWith("temp-")) {
-        toast.error("Wait for the message to finish sending");
+        toast.error(t('inbox.waitForMessage'));
         return;
       }
 
@@ -637,7 +639,7 @@ export function MessageThread({
         }
       } catch (err) {
         const reason = err instanceof Error ? err.message : "network error";
-        toast.error(`Reaction failed: ${reason}`);
+        toast.error(`${t('inbox.reactionFailed')}: ${reason}`);
         setReactions(snapshot);
       }
     },
@@ -658,7 +660,7 @@ export function MessageThread({
         onAssignChange(conversation.id, agentId);
       } catch (err) {
         console.error("Failed to update assignment:", err);
-        toast.error("Failed to update assignment");
+        toast.error(t('inbox.failedUpdateAssignment'));
       }
     },
     [conversation, onAssignChange]
@@ -674,10 +676,10 @@ export function MessageThread({
           <MessageSquare className="h-8 w-8 text-slate-600" />
         </div>
         <h3 className="mt-4 text-sm font-medium text-slate-400">
-          Select a conversation
+          {t('inbox.selectConversation')}
         </h3>
         <p className="mt-1 text-xs text-slate-600">
-          Choose a conversation from the left to start messaging
+          {t('inbox.chooseConversation')}
         </p>
       </div>
     );
@@ -691,8 +693,8 @@ export function MessageThread({
   const assignedAgentId = conversation.assigned_agent_id ?? null;
   const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
   const assignLabel = assignedAgentId
-    ? (currentAssignee?.full_name ?? "Assigned")
-    : "Assign";
+    ? (currentAssignee?.full_name ?? t('inbox.assigned'))
+    : t('inbox.assign');
 
   return (
     <div className={cn("flex flex-1 flex-col", DOODLE_BG_CLASSES)}>
@@ -706,7 +708,7 @@ export function MessageThread({
             <button
               type="button"
               onClick={onBack}
-              aria-label="Back to conversations"
+              aria-label={t('inbox.backToConversations')}
               className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-slate-300 hover:bg-slate-800 hover:text-white lg:hidden"
             >
               <ArrowLeft className="h-5 w-5" />
@@ -744,8 +746,8 @@ export function MessageThread({
               type="button"
               onClick={handleRefreshClick}
               disabled={isRefreshing}
-              aria-label="Refresh conversation"
-              title="Refresh"
+              aria-label={t('inbox.refreshConversation')}
+              title={t('common.refresh')}
               className={cn(
                 "inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-800 hover:text-white disabled:opacity-60",
               )}
@@ -762,7 +764,7 @@ export function MessageThread({
                   "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-slate-800",
                   currentStatus?.color ?? "text-slate-400"
                 )}>
-                {currentStatus?.label ?? "Status"}
+                {currentStatus?.label ? t(`inbox.status${currentStatus.label.charAt(0).toUpperCase() + currentStatus.label.slice(1)}`) : t('common.status')}
                 <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -775,7 +777,7 @@ export function MessageThread({
                   onClick={() => handleStatusChange(opt.value)}
                   className={cn("text-sm", opt.color)}
                 >
-                  {opt.label}
+                  {t(`inbox.status${opt.label.charAt(0).toUpperCase() + opt.label.slice(1)}`)}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -799,7 +801,7 @@ export function MessageThread({
             >
               {profiles.length === 0 ? (
                 <DropdownMenuItem disabled className="text-sm text-slate-500">
-                  No teammates available
+                  {t('inbox.noTeammatesAvailable')}
                 </DropdownMenuItem>
               ) : (
                 profiles.map((p) => {
@@ -815,7 +817,7 @@ export function MessageThread({
                     >
                       <span className="flex-1">
                         {p.full_name}
-                        {p.user_id === user?.id ? " (me)" : ""}
+                        {p.user_id === user?.id ? ` (${t('inbox.me')})` : ""}
                       </span>
                       {isSelected && <Check className="ml-2 h-3 w-3" />}
                     </DropdownMenuItem>
@@ -829,7 +831,7 @@ export function MessageThread({
                     onClick={() => handleAssignChange(null)}
                     className="text-sm text-slate-400"
                   >
-                    Unassign
+                    {t('inbox.unassign')}
                   </DropdownMenuItem>
                 </>
               )}
@@ -846,9 +848,9 @@ export function MessageThread({
           </div>
         ) : messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
-            <p className="text-sm text-slate-500">No messages yet</p>
+            <p className="text-sm text-slate-500">{t('inbox.noMessagesYet')}</p>
             <p className="text-xs text-slate-600">
-              Send a template to start the conversation
+              {t('inbox.sendTemplateToStart')}
             </p>
           </div>
         ) : (
@@ -858,7 +860,7 @@ export function MessageThread({
                 {/* Date separator */}
                 <div className="mb-4 flex items-center justify-center">
                   <span className="rounded-full bg-slate-800 px-3 py-1 text-[10px] font-medium text-slate-400">
-                    {formatDateSeparator(group.date)}
+                    {formatDateSeparator(group.date, t)}
                   </span>
                 </div>
                 {/* Messages */}

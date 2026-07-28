@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { databases, account } from '@/lib/appwrite/client';
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
 import { toast } from 'sonner';
@@ -79,6 +80,7 @@ function parseCSV(text: string): ParsedRow[] {
 }
 
 export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps) {
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [file, setFile] = useState<File | null>(null);
@@ -109,7 +111,7 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
     const rows = parseCSV(text);
 
     if (rows.length === 0) {
-      toast.error('No valid rows found. Ensure CSV has a "phone" column header.');
+      toast.error(t('common.error'));
       setParsedRows([]);
       return;
     }
@@ -150,14 +152,14 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
 
       setResult({ imported, failed });
       if (imported > 0) {
-        toast.success(`${imported} contact${imported !== 1 ? 's' : ''} imported`);
+        toast.success(t('contacts.importContacts'));
         onImported();
       }
       if (failed > 0) {
-        toast.error(`${failed} contact${failed !== 1 ? 's' : ''} failed to import`);
+        toast.error(t('common.error'));
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Import failed';
+      const message = err instanceof Error ? err.message : t('common.error');
       toast.error(message);
     } finally {
       setImporting(false);
@@ -170,10 +172,9 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="bg-slate-900 border-slate-700 text-slate-200 sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="text-white">Import Contacts</DialogTitle>
+          <DialogTitle className="text-white">{t('contacts.importContacts')}</DialogTitle>
           <DialogDescription className="text-slate-400">
-            Upload a CSV file with a &quot;phone&quot; column (required). Optional columns:
-            name, email, company.
+            {t('contacts.importContacts')}
           </DialogDescription>
         </DialogHeader>
 
@@ -195,10 +196,10 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
               <>
                 <Upload className="size-8 text-slate-500" />
                 <p className="text-sm text-slate-400">
-                  Click to upload CSV file
+                  {t('common.upload')}
                 </p>
                 <p className="text-xs text-slate-500">
-                  CSV with &quot;phone&quot; column required
+                  {t('contacts.form.phone')}
                 </p>
               </>
             )}
@@ -222,10 +223,10 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="bg-slate-800">
-                      <th className="px-3 py-1.5 text-left text-slate-400 font-medium">Phone</th>
-                      <th className="px-3 py-1.5 text-left text-slate-400 font-medium">Name</th>
-                      <th className="px-3 py-1.5 text-left text-slate-400 font-medium">Email</th>
-                      <th className="px-3 py-1.5 text-left text-slate-400 font-medium">Company</th>
+                      <th className="px-3 py-1.5 text-left text-slate-400 font-medium">{t('contacts.form.phone')}</th>
+                      <th className="px-3 py-1.5 text-left text-slate-400 font-medium">{t('contacts.form.firstName')}</th>
+                      <th className="px-3 py-1.5 text-left text-slate-400 font-medium">{t('contacts.form.email')}</th>
+                      <th className="px-3 py-1.5 text-left text-slate-400 font-medium">{t('contacts.form.company')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -251,18 +252,18 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
           {/* Results */}
           {result && (
             <div className="rounded-lg border border-slate-700 p-4 space-y-2">
-              <p className="text-sm font-medium text-white">Import Complete</p>
+              <p className="text-sm font-medium text-white">{t('common.success')}</p>
               <div className="flex items-center gap-4">
                 {result.imported > 0 && (
                   <div className="flex items-center gap-1.5 text-primary text-sm">
                     <CheckCircle className="size-4" />
-                    {result.imported} imported
+                    {result.imported} {t('common.success')}
                   </div>
                 )}
                 {result.failed > 0 && (
                   <div className="flex items-center gap-1.5 text-red-400 text-sm">
                     <XCircle className="size-4" />
-                    {result.failed} failed
+                    {result.failed} {t('common.error')}
                   </div>
                 )}
               </div>
@@ -277,7 +278,7 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
             onClick={() => handleOpenChange(false)}
             className="border-slate-700 text-slate-300 hover:bg-slate-800"
           >
-            {result ? 'Close' : 'Cancel'}
+            {result ? t('common.close') : t('common.cancel')}
           </Button>
           {!result && (
             <Button
@@ -287,7 +288,7 @@ export function ImportModal({ open, onOpenChange, onImported }: ImportModalProps
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {importing && <Loader2 className="size-4 animate-spin" />}
-              Import {parsedRows.length > 0 ? `${parsedRows.length} Contacts` : ''}
+              {t('contacts.importContacts')} {parsedRows.length > 0 ? `(${parsedRows.length})` : ''}
             </Button>
           )}
         </DialogFooter>

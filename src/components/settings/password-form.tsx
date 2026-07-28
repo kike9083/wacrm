@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Loader2, KeyRound } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import { account } from '@/lib/appwrite/client';
 import { useAuth } from '@/hooks/use-auth';
@@ -21,6 +22,7 @@ const MIN_PASSWORD = 8;
 
 export function PasswordForm() {
   const { profile } = useAuth();
+  const { t } = useTranslation();
 
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -31,15 +33,15 @@ export function PasswordForm() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile?.email) {
-      toast.error('Cannot change password without a current email');
+      toast.error(t('settings.password.noEmail'));
       return;
     }
     if (next.length < MIN_PASSWORD) {
-      setConfirmError(`Password must be at least ${MIN_PASSWORD} characters`);
+      setConfirmError(t('settings.password.tooShort', { min: MIN_PASSWORD }));
       return;
     }
     if (next !== confirm) {
-      setConfirmError('New password and confirmation do not match');
+      setConfirmError(t('settings.password.mismatch'));
       return;
     }
     setConfirmError(null);
@@ -51,24 +53,24 @@ export function PasswordForm() {
       try {
         await account.createEmailPasswordSession(profile.email, current);
       } catch {
-        toast.error('Current password is incorrect');
+        toast.error(t('settings.password.incorrect'));
         return;
       }
 
       try {
         await account.updatePassword(next);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Password update failed';
-        toast.error(`Password update failed: ${msg}`);
+        const msg = err instanceof Error ? err.message : t('settings.password.updateFailed');
+        toast.error(`${t('settings.password.updateFailed')}: ${msg}`);
         return;
       }
 
       setCurrent('');
       setNext('');
       setConfirm('');
-      toast.success('Password updated');
+      toast.success(t('settings.password.updated'));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
+      const msg = err instanceof Error ? err.message : t('settings.password.unknownError');
       toast.error(msg);
     } finally {
       setSaving(false);
@@ -80,11 +82,10 @@ export function PasswordForm() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-white">
           <KeyRound className="size-4 text-primary" />
-          Password
+          {t('settings.password.title')}
         </CardTitle>
         <CardDescription className="text-slate-400">
-          Use at least {MIN_PASSWORD} characters. You will stay signed in on
-          this device after changing it.
+          {t('settings.password.description', { min: MIN_PASSWORD })}
         </CardDescription>
       </CardHeader>
 
@@ -92,7 +93,7 @@ export function PasswordForm() {
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="current-password" className="text-slate-200">
-              Current password
+              {t('settings.password.current')}
             </Label>
             <Input
               id="current-password"
@@ -108,7 +109,7 @@ export function PasswordForm() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="new-password" className="text-slate-200">
-                New password
+                {t('settings.password.new')}
               </Label>
               <Input
                 id="new-password"
@@ -123,7 +124,7 @@ export function PasswordForm() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="confirm-password" className="text-slate-200">
-                Confirm new password
+                {t('settings.password.confirm')}
               </Label>
               <Input
                 id="confirm-password"
@@ -152,10 +153,10 @@ export function PasswordForm() {
               {saving ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  Updating…
+                  {t('settings.password.updating')}
                 </>
               ) : (
-                'Update password'
+                t('settings.password.updateButton')
               )}
             </Button>
           </div>

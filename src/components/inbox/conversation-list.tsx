@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { databases } from "@/lib/appwrite/client";
 import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
 import { Query } from "appwrite";
@@ -39,10 +40,10 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
 };
 
 const FILTER_OPTIONS: { label: string; value: ConversationStatus | "all" }[] = [
-  { label: "All", value: "all" },
-  { label: "Open", value: "open" },
-  { label: "Pending", value: "pending" },
-  { label: "Closed", value: "closed" },
+  { label: "all", value: "all" },
+  { label: "open", value: "open" },
+  { label: "pending", value: "pending" },
+  { label: "closed", value: "closed" },
 ];
 
 export function ConversationList({
@@ -52,6 +53,7 @@ export function ConversationList({
   onConversationsLoaded,
   resyncToken = 0,
 }: ConversationListProps) {
+  const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ConversationStatus | "all">("all");
   const [loading, setLoading] = useState(true);
@@ -176,14 +178,14 @@ export function ConversationList({
           <Input
             value={search}
             onChange={handleSearchChange}
-            placeholder="Search conversations..."
+            placeholder={t('inbox.searchPlaceholder')}
             className="border-slate-700 bg-slate-800 pl-9 text-sm text-white placeholder-slate-500 focus:border-primary/50"
           />
         </div>
 
         <DropdownMenu>
           <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-slate-400 hover:text-white rounded-md hover:bg-slate-800">
-              {activeFilter?.label ?? "All"}
+              {activeFilter?.value === 'all' ? t('inbox.allStatuses') : t(`inbox.status${(activeFilter?.label ?? 'all').charAt(0).toUpperCase() + (activeFilter?.label ?? 'all').slice(1)}`)}
               <ChevronDown className="h-3 w-3" />
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -201,7 +203,7 @@ export function ConversationList({
                     : "text-slate-300"
                 )}
               >
-                {opt.label}
+                {opt.value === 'all' ? t('inbox.allStatuses') : t(`inbox.status${opt.label.charAt(0).toUpperCase() + opt.label.slice(1)}`)}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
@@ -216,7 +218,7 @@ export function ConversationList({
           </div>
         ) : filtered.length === 0 ? (
           <div className="px-4 py-12 text-center">
-            <p className="text-sm text-slate-500">No conversations found</p>
+            <p className="text-sm text-slate-500">{t('inbox.noConversations')}</p>
           </div>
         ) : (
           <div className="flex flex-col">
@@ -246,8 +248,9 @@ function ConversationItem({
   isActive,
   onSelect,
 }: ConversationItemProps) {
+  const { t } = useTranslation();
   const contact = conversation.contact;
-  const displayName = contact?.name || contact?.phone || "Unknown";
+  const displayName = contact?.name || contact?.phone || t('inbox.unknown');
   const initials = displayName.charAt(0).toUpperCase();
 
   const handleClick = useCallback(() => {
@@ -291,7 +294,7 @@ function ConversationItem({
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
           <p className="truncate text-xs text-slate-400">
-            {conversation.last_message_text || "No messages yet"}
+            {conversation.last_message_text || t('inbox.noMessagesYet')}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
             {conversation.unread_count > 0 && (

@@ -1,6 +1,7 @@
 "use client";
 
 import { Check } from "lucide-react";
+import { useTranslation } from 'react-i18next';
 
 import { useTheme } from "@/hooks/use-theme";
 import { THEMES, type ThemeId } from "@/lib/themes";
@@ -20,14 +21,13 @@ import { cn } from "@/lib/utils";
  */
 export function AppearancePanel() {
   const { theme, setTheme } = useTheme();
+  const { t } = useTranslation();
   return (
     <section className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold text-white">Color theme</h2>
+        <h2 className="text-lg font-semibold text-white">{t('settings.appearance.title')}</h2>
         <p className="mt-1 text-sm text-slate-400">
-          Pick the accent color used across the app. All themes stay
-          dark — only the primary color (buttons, active nav, badges)
-          changes. Saved to this device.
+          {t('settings.appearance.description')}
         </p>
       </div>
 
@@ -63,12 +63,13 @@ function ThemeCard({
   isActive: boolean;
   onPick: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
       onClick={onPick}
       aria-pressed={isActive}
-      aria-label={`Use ${name} theme`}
+      aria-label={t('settings.appearance.useTheme', { name })}
       className={cn(
         "flex flex-col gap-3 rounded-lg border bg-card p-4 text-left transition-colors",
         isActive
@@ -88,7 +89,7 @@ function ThemeCard({
         {isActive && (
           <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
             <Check className="h-3 w-3" />
-            Active
+            {t('settings.appearance.active')}
           </span>
         )}
       </div>
@@ -107,7 +108,7 @@ function ThemeCard({
         <span className="w-3 bg-slate-800" />
         <span className="w-3 bg-slate-900" />
       </div>
-      <span className="sr-only">Theme id: {id}</span>
+      <span className="sr-only">{t('settings.appearance.themeId', { id })}</span>
     </button>
   );
 }

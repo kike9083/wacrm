@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Plus, Trash2, Loader2, RefreshCw } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { databases } from '@/lib/appwrite/client';
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
 import { Query, ID } from 'appwrite';
@@ -94,6 +95,7 @@ const COMMON_LANGUAGE_CODES = [
 
 export function TemplateManager() {
   const { user, loading: authLoading } = useAuth();
+  const { t } = useTranslation();
 
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -124,7 +126,7 @@ export function TemplateManager() {
       setTemplates(response.documents.map((d) => ({ ...d, id: d.$id })) as unknown as MessageTemplate[]);
     } catch (err) {
       console.error('Failed to fetch templates:', err);
-      toast.error('Failed to load templates');
+      toast.error(t('settings.templates.loadError'));
     } finally {
       setLoading(false);
     }
@@ -132,18 +134,18 @@ export function TemplateManager() {
 
   async function handleSave() {
     if (!form.name.trim()) {
-      toast.error('Template name is required');
+      toast.error(t('settings.templates.nameRequired'));
       return;
     }
     if (!form.body_text.trim()) {
-      toast.error('Body text is required');
+      toast.error(t('settings.templates.bodyRequired'));
       return;
     }
 
     try {
       setSaving(true);
       if (!user) {
-        toast.error('Not authenticated');
+        toast.error(t('settings.templates.notAuthenticated'));
         return;
       }
 
@@ -165,13 +167,13 @@ export function TemplateManager() {
         payload
       );
 
-      toast.success('Template created successfully');
+      toast.success(t('settings.templates.created'));
       setDialogOpen(false);
       setForm(emptyForm);
       if (user) await fetchTemplates(user.id);
     } catch (err) {
       console.error('Save error:', err);
-      toast.error('Failed to create template');
+      toast.error(t('settings.templates.createError'));
     } finally {
       setSaving(false);
     }
@@ -192,10 +194,10 @@ export function TemplateManager() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.error || `Sync failed (HTTP ${res.status})`);
+        throw new Error(data?.error || t('settings.templates.syncFailedHttp', { status: res.status }));
       }
       toast.success(
-        `Synced ${data.total} template${data.total === 1 ? '' : 's'} from Meta` +
+        t('settings.templates.synced', { count: data.total }) +
           (data.inserted || data.updated
             ? ` (${data.inserted} new, ${data.updated} updated)`
             : ''),
@@ -209,18 +211,18 @@ export function TemplateManager() {
         );
         const suffix =
           data.errors.length > 3 ? `, +${data.errors.length - 3} more` : '';
-        toast.error(`Failed to sync: ${preview.join(', ')}${suffix}`);
+        toast.error(`${t('settings.templates.syncErrors')}: ${preview.join(', ')}${suffix}`);
       }
       if (data.truncated) {
         toast.warning(
-          'Hit Meta pagination cap — more templates may exist. Contact support if this persists.',
+          t('settings.templates.syncTruncated'),
         );
       }
       await fetchTemplates(user.id);
     } catch (err) {
       console.error('Template sync error:', err);
       toast.error(
-        err instanceof Error ? err.message : 'Failed to sync templates',
+        err instanceof Error ? err.message : t('settings.templates.syncError'),
       );
     } finally {
       setSyncing(false);
@@ -234,11 +236,11 @@ export function TemplateManager() {
         COLLECTIONS.messageTemplates,
         id
       );
-      toast.success('Template deleted');
+      toast.success(t('settings.templates.deleted'));
       setTemplates((prev) => prev.filter((t) => t.id !== id));
     } catch (err) {
       console.error('Delete error:', err);
-      toast.error('Failed to delete template');
+      toast.error(t('settings.templates.deleteError'));
     }
   }
 
@@ -254,11 +256,9 @@ export function TemplateManager() {
     <div className="space-y-4 mt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-lg font-semibold text-white">Message Templates</h2>
+          <h2 className="text-lg font-semibold text-white">{t('settings.templates.title')}</h2>
           <p className="text-sm text-slate-400">
-            Create and manage your WhatsApp message templates. Meta requires
-            every template to be approved in the WhatsApp Manager before it can
-            be sent — use &quot;Sync from Meta&quot; to pull your approved list.
+            {t('settings.templates.description')}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -267,12 +267,12 @@ export function TemplateManager() {
             onClick={handleSyncFromMeta}
             disabled={syncing}
             className="border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800"
-            title="Pull approved templates from your Meta WhatsApp Business Account"
+            title={t('settings.templates.syncTooltip')}
           >
             <RefreshCw
               className={`size-4 ${syncing ? 'animate-spin' : ''}`}
             />
-            {syncing ? 'Syncing…' : 'Sync from Meta'}
+            {syncing ? t('settings.templates.syncing') : t('settings.templates.syncFromMeta')}
           </Button>
           <Button
             onClick={() => {
@@ -282,7 +282,7 @@ export function TemplateManager() {
             className="bg-primary hover:bg-primary/90 text-primary-foreground"
           >
             <Plus className="size-4" />
-            New Template
+            {t('settings.templates.newTemplate')}
           </Button>
         </div>
       </div>
@@ -290,8 +290,8 @@ export function TemplateManager() {
       {templates.length === 0 ? (
         <Card className="bg-slate-900 border-slate-700 ring-0 ring-transparent">
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-slate-400 text-sm">No templates yet.</p>
-            <p className="text-slate-500 text-xs mt-1">Create your first message template to get started.</p>
+            <p className="text-slate-400 text-sm">{t('settings.templates.empty')}</p>
+            <p className="text-slate-500 text-xs mt-1">{t('settings.templates.emptyHint')}</p>
           </CardContent>
         </Card>
       ) : (
@@ -339,17 +339,17 @@ export function TemplateManager() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="bg-slate-900 border-slate-700 sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-white">New Message Template</DialogTitle>
+            <DialogTitle className="text-white">{t('settings.templates.newTemplateTitle')}</DialogTitle>
             <DialogDescription className="text-slate-400">
-              Create a new WhatsApp message template.
+              {t('settings.templates.newTemplateDescription')}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label className="text-slate-300">Template Name</Label>
+              <Label className="text-slate-300">{t('settings.templates.templateName')}</Label>
               <Input
-                placeholder="e.g. order_confirmation"
+                placeholder={t('settings.templates.templateNamePlaceholder')}
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
@@ -358,7 +358,7 @@ export function TemplateManager() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label className="text-slate-300">Category</Label>
+                <Label className="text-slate-300">{t('settings.templates.category')}</Label>
                 <Select
                   value={form.category}
                   onValueChange={(val) =>
@@ -379,7 +379,7 @@ export function TemplateManager() {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-slate-300">Language</Label>
+                <Label className="text-slate-300">{t('settings.templates.language')}</Label>
                 <Input
                   list="template-language-codes"
                   placeholder="en_US"
@@ -393,25 +393,23 @@ export function TemplateManager() {
                   ))}
                 </datalist>
                 <p className="text-[11px] text-slate-500">
-                  Must match the exact language code the template is approved
-                  under on Meta — e.g. <code>en_US</code> and <code>en</code>{' '}
-                  are distinct.
+                  {t('settings.templates.languageHint')}
                 </p>
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label className="text-slate-300">Header Type</Label>
+              <Label className="text-slate-300">{t('settings.templates.headerType')}</Label>
               <Select
                 value={form.header_type}
                 onValueChange={(val) => setForm({ ...form, header_type: val || '' })}
               >
                 <SelectTrigger className="w-full bg-slate-800 border-slate-700 text-white">
-                  <SelectValue placeholder="None" />
+                  <SelectValue placeholder={t('settings.templates.none')} />
                 </SelectTrigger>
                 <SelectContent className="bg-slate-800 border-slate-700">
                   <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
-                    None
+                    {t('settings.templates.none')}
                   </SelectItem>
                   {HEADER_TYPES.map((type) => (
                     <SelectItem key={type} value={type} className="text-white focus:bg-slate-700 focus:text-white">
@@ -423,9 +421,9 @@ export function TemplateManager() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-slate-300">Body Text</Label>
+              <Label className="text-slate-300">{t('settings.templates.bodyText')}</Label>
               <Textarea
-                placeholder="Enter your template message body. Use {{1}}, {{2}} for variables."
+                placeholder={t('settings.templates.bodyPlaceholder')}
                 value={form.body_text}
                 onChange={(e) => setForm({ ...form, body_text: e.target.value })}
                 rows={4}
@@ -434,9 +432,9 @@ export function TemplateManager() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-slate-300">Footer Text</Label>
+              <Label className="text-slate-300">{t('settings.templates.footerText')}</Label>
               <Input
-                placeholder="Optional footer text"
+                placeholder={t('settings.templates.footerPlaceholder')}
                 value={form.footer_text}
                 onChange={(e) => setForm({ ...form, footer_text: e.target.value })}
                 className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
@@ -450,7 +448,7 @@ export function TemplateManager() {
               onClick={() => setDialogOpen(false)}
               className="border-slate-700 text-slate-300 hover:bg-slate-800"
             >
-              Cancel
+              {t('settings.templates.cancel')}
             </Button>
             <Button
               onClick={handleSave}
@@ -460,10 +458,10 @@ export function TemplateManager() {
               {saving ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  Creating...
+                  {t('settings.templates.creating')}
                 </>
               ) : (
-                'Create Template'
+                t('settings.templates.createButton')
               )}
             </Button>
           </DialogFooter>

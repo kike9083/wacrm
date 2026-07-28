@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { databases, account } from "@/lib/appwrite/client";
 import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
 import { Query } from "appwrite";
@@ -39,6 +40,7 @@ const SPEC_DEFAULT_STAGES = [
 ];
 
 export default function PipelinesPage() {
+  const { t } = useTranslation();
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
   const [stages, setStages] = useState<PipelineStage[]>([]);
@@ -228,7 +230,7 @@ export default function PipelinesPage() {
           stage_id: newStageId,
         });
       } catch {
-        toast.error("Failed to move deal");
+        toast.error(t('pipelines.failedToMove'));
         refreshDeals();
       }
     },
@@ -276,7 +278,7 @@ export default function PipelinesPage() {
         { user_id: user.$id, name }
       );
     } catch {
-      toast.error("Failed to create pipeline");
+      toast.error(t('pipelines.failedToCreate'));
       setCreating(false);
       return;
     }
@@ -298,7 +300,7 @@ export default function PipelinesPage() {
     setSelectedPipelineId(pipeline.$id);
     await refreshPipelines();
     setCreating(false);
-    toast.success("Pipeline created");
+    toast.success(t('pipelines.created'));
   }
 
   const selectedPipeline = pipelines.find((p) => p.id === selectedPipelineId);
@@ -331,7 +333,7 @@ export default function PipelinesPage() {
             >
               <GitBranch className="h-4 w-4 text-primary" />
               <span className="font-semibold">
-                {selectedPipeline?.name ?? "Select Pipeline"}
+                {selectedPipeline?.name ?? t('pipelines.selectPipeline')}
               </span>
               <ChevronDown className="h-4 w-4 text-slate-400" />
             </DropdownMenuTrigger>
@@ -341,7 +343,7 @@ export default function PipelinesPage() {
             >
               {pipelines.length === 0 && (
                 <DropdownMenuItem disabled className="text-slate-500">
-                  No pipelines yet
+                  {t('pipelines.noPipelines')}
                 </DropdownMenuItem>
               )}
               {pipelines.map((p) => (
@@ -365,7 +367,7 @@ export default function PipelinesPage() {
                   className="text-slate-300"
                 >
                   <Settings className="mr-2 h-3.5 w-3.5" />
-                  Manage Pipelines
+                  {t('pipelines.managePipelines')}
                 </DropdownMenuItem>
               )}
             </DropdownMenuContent>
@@ -379,7 +381,7 @@ export default function PipelinesPage() {
             className="border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800"
           >
             <Plus className="mr-1 h-4 w-4" />
-            Add Pipeline
+            {t('pipelines.addPipeline')}
           </Button>
           <Button
             onClick={() => handleAddDeal()}
@@ -387,7 +389,7 @@ export default function PipelinesPage() {
             className="bg-primary text-primary-foreground hover:bg-primary/90"
           >
             <Plus className="mr-1 h-4 w-4" />
-            Add Deal
+            {t('pipelines.addDeal')}
           </Button>
         </div>
       </div>
@@ -397,17 +399,17 @@ export default function PipelinesPage() {
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 py-20">
           <GitBranch className="h-12 w-12 text-slate-600" />
           <h3 className="mt-4 text-lg font-medium text-white">
-            No pipelines yet
+            {t('pipelines.noPipelines')}
           </h3>
           <p className="mt-2 text-sm text-slate-400">
-            Create a pipeline to start tracking deals
+            {t('pipelines.noPipelinesDescription')}
           </p>
           <Button
             onClick={() => setNewPipelineOpen(true)}
             className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90"
           >
             <Plus className="mr-1 h-4 w-4" />
-            Create Pipeline
+            {t('pipelines.createFirst')}
           </Button>
         </div>
       ) : (
@@ -427,21 +429,21 @@ export default function PipelinesPage() {
       <Dialog open={newPipelineOpen} onOpenChange={setNewPipelineOpen}>
         <DialogContent className="sm:max-w-sm bg-slate-900 border-slate-700">
           <DialogHeader>
-            <DialogTitle className="text-white">New Pipeline</DialogTitle>
+            <DialogTitle className="text-white">{t('pipelines.newPipeline')}</DialogTitle>
           </DialogHeader>
           <div className="py-2">
-            <Label className="text-slate-300">Pipeline Name</Label>
+            <Label className="text-slate-300">{t('pipelines.pipelineName')}</Label>
             <Input
               value={newPipelineName}
               onChange={(e) => setNewPipelineName(e.target.value)}
-              placeholder="e.g., Enterprise Sales"
+              placeholder={t('pipelines.pipelineNamePlaceholder')}
               className="mt-2 bg-slate-800 border-slate-700 text-white"
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleCreatePipeline();
               }}
             />
             <p className="mt-2 text-xs text-slate-400">
-              Default stages (New Lead → Won) will be created automatically.
+              {t('pipelines.defaultStagesHelp')}
             </p>
           </div>
           <DialogFooter className="bg-slate-900/50 border-slate-700">
@@ -450,14 +452,14 @@ export default function PipelinesPage() {
               onClick={() => setNewPipelineOpen(false)}
               className="border-slate-700 text-slate-300 hover:bg-slate-800"
             >
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={handleCreatePipeline}
               disabled={creating || !newPipelineName.trim()}
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
-              {creating ? "Creating..." : "Create Pipeline"}
+              {creating ? t('pipelines.creating') : t('pipelines.createPipeline')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { databases, account } from "@/lib/appwrite/client";
 import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
 import { Query } from "appwrite";
@@ -26,6 +27,7 @@ interface ContactSidebarProps {
 }
 
 export function ContactSidebar({ contact }: ContactSidebarProps) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -165,7 +167,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   if (!contact) {
     return (
       <div className="flex h-full w-70 items-center justify-center border-l border-slate-800 bg-slate-900">
-        <p className="text-sm text-slate-500">Select a conversation</p>
+        <p className="text-sm text-slate-500">{t('inbox.selectConversation')}</p>
       </div>
     );
   }
@@ -228,11 +230,11 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
           <div>
             <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-slate-500">
               <TagIcon className="h-3 w-3" />
-              Tags
+              {t('contacts.tags')}
             </div>
             <div className="mt-2 flex flex-wrap gap-1">
               {tags.length === 0 ? (
-                <p className="px-1 text-xs text-slate-600">No tags</p>
+                <p className="px-1 text-xs text-slate-600">{t('contacts.noTags')}</p>
               ) : (
                 tags.map((tag) => (
                   <span
@@ -257,11 +259,11 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
           <div>
             <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-slate-500">
               <DollarSign className="h-3 w-3" />
-              Active Deals
+              {t('inbox.activeDeals')}
             </div>
             <div className="mt-2 space-y-2">
               {deals.length === 0 ? (
-                <p className="px-1 text-xs text-slate-600">No deals</p>
+                <p className="px-1 text-xs text-slate-600">{t('pipelines.noDeals')}</p>
               ) : (
                 deals.map((deal) => (
                   <div
@@ -301,14 +303,14 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
           <div>
             <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-slate-500">
               <StickyNote className="h-3 w-3" />
-              Notes
+              {t('contacts.notes')}
             </div>
             <div className="mt-2">
               <div className="flex gap-2">
                 <textarea
                   value={newNote}
                   onChange={(e) => setNewNote(e.target.value)}
-                  placeholder="Add a note..."
+                  placeholder={t('inbox.addNotePlaceholder')}
                   rows={2}
                   className="flex-1 resize-none rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-primary/50"
                 />

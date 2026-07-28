@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   DndContext,
   PointerSensor,
@@ -70,6 +71,7 @@ export function PipelineSettings({
   onStagesChanged,
   onCreateNewPipeline,
 }: PipelineSettingsProps) {
+  const { t } = useTranslation();
   const [name, setName] = useState(pipeline.name);
   const [localStages, setLocalStages] = useState<PipelineStage[]>(stages);
   const [newStageName, setNewStageName] = useState("");
@@ -130,7 +132,7 @@ export function PipelineSettings({
         ),
       ]);
     } catch {
-      toast.error("Failed to save pipeline");
+      toast.error(t('pipelines.failedToSave'));
       setSaving(false);
       return;
     }
@@ -140,7 +142,7 @@ export function PipelineSettings({
     onOpenChange(false);
     onPipelinesChanged();
     onStagesChanged();
-    toast.success("Pipeline saved");
+    toast.success(t('pipelines.saved'));
   }
 
   async function handleAddStage() {
@@ -160,7 +162,7 @@ export function PipelineSettings({
         }
       );
     } catch {
-      toast.error("Failed to add stage");
+      toast.error(t('pipelines.failedToAddStage'));
       return;
     }
     setLocalStages([...localStages, { ...data, id: data.$id } as unknown as PipelineStage]);
@@ -177,7 +179,7 @@ export function PipelineSettings({
         [Query.equal("stage_id", stageId), Query.limit(0)]
       );
       if (total > 0) {
-        toast.error("Move or delete deals in this stage first");
+        toast.error(t('pipelines.moveOrDeleteDealsFirst'));
         return;
       }
     } catch {
@@ -186,7 +188,7 @@ export function PipelineSettings({
     try {
       await databases.deleteDocument(DATABASE_ID, COLLECTIONS.pipelineStages, stageId);
     } catch {
-      toast.error("Failed to delete stage");
+      toast.error(t('pipelines.failedToDeleteStage'));
       return;
     }
     setLocalStages(localStages.filter((s) => s.id !== stageId));
@@ -198,20 +200,20 @@ export function PipelineSettings({
       await databases.deleteDocument(DATABASE_ID, COLLECTIONS.pipelines, pipeline.id);
     } catch {
       setDeleting(false);
-      toast.error("Failed to delete pipeline");
+      toast.error(t('pipelines.failedToDelete'));
       return;
     }
     setDeleting(false);
     onOpenChange(false);
     onPipelinesChanged();
-    toast.success("Pipeline deleted");
+    toast.success(t('pipelines.deleted'));
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md bg-slate-900 border-slate-700 max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-white">Manage Pipeline</DialogTitle>
+          <DialogTitle className="text-white">{t('pipelines.managePipeline')}</DialogTitle>
         </DialogHeader>
 
         {showDeleteConfirm ? (
@@ -220,11 +222,10 @@ export function PipelineSettings({
               <AlertTriangle className="h-5 w-5 shrink-0 text-red-400" />
               <div>
                 <p className="text-sm font-medium text-red-400">
-                  Delete Pipeline
+                  {t('pipelines.deletePipeline')}
                 </p>
                 <p className="mt-1 text-xs text-slate-400">
-                  This will archive all deals in this pipeline. This cannot be
-                  undone.
+                  {t('pipelines.deleteWarning')}
                 </p>
               </div>
             </div>
@@ -234,14 +235,14 @@ export function PipelineSettings({
                 onClick={() => setShowDeleteConfirm(false)}
                 className="border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800"
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button
                 onClick={handleDeletePipeline}
                 disabled={deleting}
                 className="bg-red-600 text-white hover:bg-red-700"
               >
-                {deleting ? "Deleting..." : "Delete Pipeline"}
+                {deleting ? t('pipelines.deleting') : t('pipelines.deletePipeline')}
               </Button>
             </div>
           </div>
@@ -249,7 +250,7 @@ export function PipelineSettings({
           <>
             <div className="grid gap-4 py-2">
               <div className="grid gap-2">
-                <Label className="text-slate-300">Pipeline Name</Label>
+                <Label className="text-slate-300">{t('pipelines.pipelineName')}</Label>
                 <Input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -258,7 +259,7 @@ export function PipelineSettings({
               </div>
 
               <div className="grid gap-2">
-                <Label className="text-slate-300">Stages</Label>
+                <Label className="text-slate-300">{t('pipelines.stages')}</Label>
                 <DndContext
                   sensors={sensors}
                   collisionDetection={closestCenter}
@@ -312,7 +313,7 @@ export function PipelineSettings({
                   <Input
                     value={newStageName}
                     onChange={(e) => setNewStageName(e.target.value)}
-                    placeholder="New stage name"
+                    placeholder={t('pipelines.newStageName')}
                     className="border-slate-700 bg-slate-800 text-sm text-white"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleAddStage();
@@ -326,7 +327,7 @@ export function PipelineSettings({
                     className="shrink-0 border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800"
                   >
                     <Plus className="mr-1 h-3 w-3" />
-                    Add
+                    {t('common.add')}
                   </Button>
                 </div>
               </div>
@@ -337,7 +338,7 @@ export function PipelineSettings({
                 className="w-full border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800"
               >
                 <Plus className="mr-1 h-3 w-3" />
-                Create a new pipeline
+                {t('pipelines.createNew')}
               </Button>
             </div>
 
@@ -347,21 +348,21 @@ export function PipelineSettings({
                 onClick={() => setShowDeleteConfirm(true)}
                 className="mr-auto bg-red-600 hover:bg-red-700"
               >
-                Delete Pipeline
+                {t('pipelines.deletePipeline')}
               </Button>
               <Button
                 variant="outline"
                 onClick={() => onOpenChange(false)}
                 className="border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800"
               >
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button
                 onClick={handleSave}
                 disabled={saving || !name.trim()}
                 className="bg-primary text-primary-foreground hover:bg-primary/90"
               >
-                {saving ? "Saving..." : "Save Changes"}
+                {saving ? t('pipelines.saving') : t('pipelines.saveChanges')}
               </Button>
             </DialogFooter>
           </>
@@ -384,6 +385,7 @@ function SortableStageRow({
   onRemove: () => void;
   colors: string[];
 }) {
+  const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: stage.id });
 
@@ -404,7 +406,7 @@ function SortableStageRow({
         {...attributes}
         {...listeners}
         className="cursor-grab touch-none text-slate-500 hover:text-slate-300 active:cursor-grabbing"
-        aria-label="Drag to reorder"
+        aria-label={t('pipelines.dragToReorder')}
       >
         <GripVertical className="h-4 w-4" />
       </button>
@@ -435,6 +437,7 @@ function ColorSwatch({
   onChange: (v: string) => void;
   colors: string[];
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   return (
     <div className="relative">
@@ -443,7 +446,7 @@ function ColorSwatch({
         onClick={() => setOpen((v) => !v)}
         className="h-4 w-4 rounded-full border border-slate-600"
         style={{ backgroundColor: value }}
-        aria-label="Change color"
+        aria-label={t('pipelines.changeColor')}
       />
       {open && (
         <>
