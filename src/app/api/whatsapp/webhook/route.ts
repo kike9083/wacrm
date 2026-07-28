@@ -3,7 +3,7 @@ import { createAdminClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { createDriver, getDriverType } from '@/lib/whatsapp/driver'
+import { createMetaDriver } from '@/lib/whatsapp/driver'
 import type { WhatsAppDriver } from '@/lib/whatsapp/types'
 import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
@@ -229,7 +229,7 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
         const message = value.messages[i]
         const contact = value.contacts[i] || value.contacts[0]
 
-        const metaDriver = createDriver('meta', {
+        const metaDriver = createMetaDriver({
           phoneNumberId: config.phone_number_id,
           accessToken: decryptedAccessToken,
         })

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
-import { createDriver, getDriverType } from '@/lib/whatsapp/driver'
+import { createMetaDriver } from '@/lib/whatsapp/driver'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 
 /**
@@ -26,24 +26,6 @@ export async function GET() {
       user = await account.get()
     } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const driverType = getDriverType()
-
-    // Evolution driver: verify connection using env vars
-    if (driverType === 'evolution') {
-      try {
-        const driver = createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
-        const phoneInfo = await driver.verifyConnection()
-        return NextResponse.json({ connected: true, phone_info: phoneInfo })
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown Evolution API error'
-        console.error('[whatsapp/config GET] Evolution API verification failed:', message)
-        return NextResponse.json(
-          { connected: false, reason: 'evolution_api_error', message },
-          { status: 200 }
-        )
-      }
     }
 
     // Meta driver: read config from DB
@@ -94,7 +76,7 @@ export async function GET() {
 
     // Validate credentials against Meta
     try {
-      const driver = createDriver('meta', { phoneNumberId: config.phone_number_id, accessToken })
+      const driver = createMetaDriver({ phoneNumberId: config.phone_number_id, accessToken })
       const phoneInfo = await driver.verifyConnection()
       return NextResponse.json({ connected: true, phone_info: phoneInfo })
     } catch (err) {
@@ -146,9 +128,8 @@ export async function POST(request: Request) {
 
     // Verify credentials BEFORE saving
     let phoneInfo
-    const driverType = getDriverType()
     try {
-      const driver = createDriver('meta', { phoneNumberId: phone_number_id, accessToken: access_token })
+      const driver = createMetaDriver({ phoneNumberId: phone_number_id, accessToken: access_token })
       phoneInfo = await driver.verifyConnection()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown API error'

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
-import { createDriver, getDriverType } from '@/lib/whatsapp/driver'
+import { createMetaDriver } from '@/lib/whatsapp/driver'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import {
   sanitizePhoneForMeta,
@@ -192,11 +192,8 @@ export async function POST(request: Request) {
       }
     }
 
-    // Create driver (meta or evolution)
-    const driverType = getDriverType()
-    const driver = driverType === 'evolution'
-      ? createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
-      : createDriver('meta', { phoneNumberId: config.phone_number_id, accessToken })
+    // Create Meta driver
+    const driver = createMetaDriver({ phoneNumberId: config.phone_number_id, accessToken })
 
     // Send via driver — retry with phone-number variants
     let waMessageId = ''

@@ -1,4 +1,4 @@
-import { createDriver, getDriverType } from '@/lib/whatsapp/driver'
+import { createMetaDriver } from '@/lib/whatsapp/driver'
 import type { InteractiveButton, InteractiveListSection } from '@/lib/whatsapp/types'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
@@ -78,10 +78,7 @@ export async function engineSendText(
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const driverType = getDriverType()
-  const driver = driverType === 'evolution'
-    ? createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
-    : createDriver('meta', { phoneNumberId: (config as any).phone_number_id, accessToken: decrypt((config as any).access_token) })
+  const driver = createMetaDriver({ phoneNumberId: (config as any).phone_number_id, accessToken: decrypt((config as any).access_token) })
 
   const attempt = async (phone: string): Promise<string> => {
     const r = await driver.sendText(phone, args.text)
@@ -224,10 +221,7 @@ async function sendInteractiveViaMeta(
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const driverType = getDriverType()
-  const driver = driverType === 'evolution'
-    ? createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
-    : createDriver('meta', { phoneNumberId: (config as any).phone_number_id, accessToken: decrypt((config as any).access_token) })
+  const driver = createMetaDriver({ phoneNumberId: (config as any).phone_number_id, accessToken: decrypt((config as any).access_token) })
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'buttons') {

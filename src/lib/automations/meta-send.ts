@@ -1,4 +1,4 @@
-import { createDriver, getDriverType } from '@/lib/whatsapp/driver'
+import { createMetaDriver } from '@/lib/whatsapp/driver'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import {
   sanitizePhoneForMeta,
@@ -82,10 +82,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const driverType = getDriverType()
-  const driver = driverType === 'evolution'
-    ? createDriver('evolution', { instanceName: process.env.EVOLUTION_INSTANCE_NAME || 'default' })
-    : createDriver('meta', { phoneNumberId: (config as any).phone_number_id, accessToken: decrypt((config as any).access_token) })
+  const driver = createMetaDriver({ phoneNumberId: (config as any).phone_number_id, accessToken: decrypt((config as any).access_token) })
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'template') {
