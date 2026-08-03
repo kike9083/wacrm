@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
 
-import { account } from "@/lib/appwrite/client";
-import { getClientSessionSecret } from "@/lib/appwrite/client-session";
+import { client } from "@/lib/appwrite/client";
+import { persistClientSession } from "@/lib/appwrite/client-session";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,26 +59,10 @@ export default function SignupPage() {
         return;
       }
 
-      const session = await account.createEmailPasswordSession(email, password);
-      const secret =
-        typeof session.secret === "string" && session.secret.length >= 16
-          ? session.secret
-          : getClientSessionSecret();
-      if (!secret) {
-        setError(t("auth.signupFailed"));
-        setLoading(false);
-        return;
-      }
-      const res2 = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secret }),
-      });
-      if (!res2.ok) {
-        await account.deleteSession("current").catch(() => {});
-        setError(t("auth.signupFailed"));
-        setLoading(false);
-        return;
+      const data = await res.json();
+      if (typeof data.session === "string" && data.session.length >= 16) {
+        client.setSession(data.session);
+        persistClientSession(data.session);
       }
       router.push("/dashboard");
     } catch {

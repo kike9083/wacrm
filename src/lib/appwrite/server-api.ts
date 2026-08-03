@@ -36,6 +36,14 @@ export async function createAccount(email: string, password: string, name: strin
   return account
 }
 
+export async function createEmailSession(email: string, password: string) {
+  const session = await request('POST', '/account/sessions/email', { email, password })
+  if (typeof session.secret !== 'string' || session.secret.length < 16) {
+    throw new Error('Session response did not include a secret')
+  }
+  return session
+}
+
 export async function deleteSession(sessionId: string, session?: string) {
   return request('DELETE', `/account/sessions/${sessionId}`, undefined, session)
 }

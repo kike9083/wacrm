@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslation } from "react-i18next";
-import { account } from "@/lib/appwrite/client";
-import { getClientSessionSecret } from "@/lib/appwrite/client-session";
+import { client } from "@/lib/appwrite/client";
+import { persistClientSession } from "@/lib/appwrite/client-session";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,35 +32,27 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const session = await account.createEmailPasswordSession(email, password);
-
-      const secret =
-        typeof session.secret === "string" && session.secret.length >= 16
-          ? session.secret
-          : getClientSessionSecret();
-      if (!secret) {
-        setError(t("auth.loginFailed"));
-        setLoading(false);
-        return;
-      }
-
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secret }),
+        body: JSON.stringify({ email, password }),
       });
 
+      const data = await res.json();
       if (!res.ok) {
-        await account.deleteSession("current").catch(() => {});
-        const data = await res.json();
         setError(data.error || t("auth.loginFailed"));
         setLoading(false);
         return;
       }
 
+      if (typeof data.session === "string" && data.session.length >= 16) {
+        client.setSession(data.session);
+        persistClientSession(data.session);
+      }
+
       router.push("/dashboard");
-    } catch (err: any) {
-      setError(err?.type ? t("auth.loginFailed") : t("auth.networkError"));
+    } catch {
+      setError(t("auth.networkError"));
       setLoading(false);
     }
   };

@@ -8,7 +8,8 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { account, databases } from "@/lib/appwrite/client";
+import { account, databases, client } from "@/lib/appwrite/client";
+import { getClientSessionSecret, clearClientSession } from "@/lib/appwrite/client-session";
 import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
 
 interface AppwriteUser {
@@ -84,6 +85,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const checkSession = async () => {
       try {
+        // Re-attach the session secret persisted by the server-side login
+        // (the SDK cannot read the httpOnly cookie, and Appwrite 1.8.1
+        // suppresses X-Fallback-Cookies for same-registerable-domain origins).
+        const sessionSecret = getClientSessionSecret();
+        if (sessionSecret) client.setSession(sessionSecret);
+
         const raw = await account.get();
         if (!mounted) return;
         const currentUser = { ...raw, id: raw.$id } as unknown as AppwriteUser;
@@ -110,9 +117,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    // Delete the SDK session first (keeps localStorage fallback in sync),
-    // then clear the server cookie.
+    // Delete the Appwrite session, clear the SDK secret and the server
+    // cookie, then redirect.
     await account.deleteSession("current").catch(() => {});
+    clearClientSession();
     await fetch("/api/auth/logout", { method: "POST" });
     setUser(null);
     setProfile(null);
