@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createEmailSession } from '@/lib/appwrite/server-api'
+import { createEmailSession, ensureProfile } from '@/lib/appwrite/server-api'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
 export const SESSION_COOKIE = 'wacrm_session'
@@ -34,6 +34,11 @@ export async function POST(request: NextRequest) {
     // receives the secret once via setSession; the httpOnly cookie mirrors
     // it for SSR/proxy validation.
     const session = await createEmailSession(email, password)
+
+    // Self-heal: ensure the user's profile document exists (accounts
+    // created before the profiles collection existed would 404 on the
+    // client's getDocument on every page load). Never blocks the login.
+    await ensureProfile(session.userId).catch(() => {})
 
     const response = NextResponse.json({ success: true, session: session.secret }, { status: 200 })
     setSessionCookie(response, session.secret)

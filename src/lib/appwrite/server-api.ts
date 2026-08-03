@@ -1,3 +1,5 @@
+import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
+
 const ENDPOINT = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!
 const PROJECT_ID = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!
 const API_KEY = process.env.APPWRITE_API_KEY
@@ -42,6 +44,38 @@ export async function createEmailSession(email: string, password: string) {
     throw new Error('Session response did not include a secret')
   }
   return session
+}
+
+export async function getProfile(userId: string) {
+  try {
+    return await request('GET', `/databases/${DATABASE_ID}/collections/${COLLECTIONS.profiles}/documents/${userId}`)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Creates the user's profile document if it does not exist yet (self-heal:
+ * accounts created before the profiles collection existed, or signups whose
+ * profile write failed, would otherwise 404 in the client on every load).
+ */
+export async function ensureProfile(userId: string) {
+  const existing = await getProfile(userId)
+  if (existing) return existing
+
+  const user = await request('GET', `/users/${userId}`)
+  return request('POST', `/databases/${DATABASE_ID}/collections/${COLLECTIONS.profiles}/documents`, {
+    documentId: userId,
+    data: {
+      user_id: userId,
+      full_name: user.name,
+      email: user.email,
+      avatar_url: null,
+      role: 'member',
+      beta_features: false,
+    },
+    permissions: ['read("any")', 'write("any")'],
+  })
 }
 
 export async function deleteSession(sessionId: string, session?: string) {
