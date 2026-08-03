@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslation } from "react-i18next";
 import { account } from "@/lib/appwrite/client";
+import { getClientSessionSecret } from "@/lib/appwrite/client-session";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,10 +34,20 @@ export default function LoginPage() {
     try {
       const session = await account.createEmailPasswordSession(email, password);
 
+      const secret =
+        typeof session.secret === "string" && session.secret.length >= 16
+          ? session.secret
+          : getClientSessionSecret();
+      if (!secret) {
+        setError(t("auth.loginFailed"));
+        setLoading(false);
+        return;
+      }
+
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secret: session.secret }),
+        body: JSON.stringify({ secret }),
       });
 
       if (!res.ok) {
