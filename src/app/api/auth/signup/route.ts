@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createAccount, createUserSession, request } from '@/lib/appwrite/server-api'
+import { createAccount, request } from '@/lib/appwrite/server-api'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
 
@@ -32,18 +32,10 @@ export async function POST(request: NextRequest) {
     const { email, password, name } = await request.json()
     const account = await createAccount(email, password, name)
     await createProfile(account.$id, email, name)
-    const session = await createUserSession(email, password)
 
-    const response = NextResponse.json({ user: session.user, secret: session.secret }, { status: 200 })
-    response.cookies.set('appwrite-session', session.secret, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 30,
-    })
-
-    return response
+    // Session is created client-side (SDK) after account creation, then
+    // mirrored into the session cookie via POST /api/auth/login.
+    return NextResponse.json({ user: { $id: account.$id, email: account.email, name: account.name } }, { status: 200 })
   } catch {
     // Never leak internal Appwrite errors
     return NextResponse.json({ error: 'Signup failed' }, { status: 400 })

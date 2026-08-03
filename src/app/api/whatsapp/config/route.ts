@@ -191,8 +191,8 @@ export async function POST(request: Request) {
             updated_at: new Date().toISOString(),
           }
         )
-      } catch {
-        console.error('Error updating whatsapp_config')
+      } catch (error) {
+        console.error('Error updating whatsapp_config:', error)
         return NextResponse.json(
           { error: 'Failed to update configuration' },
           { status: 500 }
@@ -214,8 +214,8 @@ export async function POST(request: Request) {
             connected_at: new Date().toISOString(),
           }
         )
-      } catch {
-        console.error('Error inserting whatsapp_config')
+      } catch (error) {
+        console.error('Error inserting whatsapp_config:', error)
         return NextResponse.json(
           { error: 'Failed to save configuration' },
           { status: 500 }
@@ -272,8 +272,8 @@ export async function DELETE() {
         COLLECTIONS.whatsappConfig,
         config.$id
       )
-    } catch {
-      console.error('Error deleting whatsapp_config')
+    } catch (error) {
+      console.error('Error deleting whatsapp_config:', error)
       return NextResponse.json(
         { error: 'Failed to delete configuration' },
         { status: 500 }

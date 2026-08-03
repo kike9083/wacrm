@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createUserSession } from '@/lib/appwrite/server-api'
 import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+
+export const SESSION_COOKIE = 'wacrm_session'
 
 export async function POST(request: NextRequest) {
   // Rate limit: 10 login attempts per minute per IP
@@ -9,11 +10,16 @@ export async function POST(request: NextRequest) {
   if (!rl.success) return rateLimitResponse(rl)
 
   try {
-    const { email, password } = await request.json()
-    const session = await createUserSession(email, password)
+    const { secret } = await request.json()
+    if (typeof secret !== 'string' || secret.length < 16) {
+      return NextResponse.json({ error: 'Invalid session' }, { status: 400 })
+    }
 
-    const response = NextResponse.json({ user: session.user, secret: session.secret }, { status: 200 })
-    response.cookies.set('appwrite-session', session.secret, {
+    // The session is created by the client SDK so the browser keeps the
+    // same session the server trusts (single source of truth). The cookie
+    // mirrors that session's secret for SSR/middleware only.
+    const response = NextResponse.json({ success: true }, { status: 200 })
+    response.cookies.set(SESSION_COOKIE, secret, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',

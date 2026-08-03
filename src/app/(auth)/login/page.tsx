@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslation } from "react-i18next";
-import { client } from "@/lib/appwrite/client";
+import { account } from "@/lib/appwrite/client";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,24 +31,25 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      const session = await account.createEmailPasswordSession(email, password);
+
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ secret: session.secret }),
       });
 
-      const data = await res.json();
-
       if (!res.ok) {
+        await account.deleteSession("current").catch(() => {});
+        const data = await res.json();
         setError(data.error || t("auth.loginFailed"));
         setLoading(false);
         return;
       }
 
-      client.setSession(data.secret);
       router.push("/dashboard");
-    } catch {
-      setError(t("auth.networkError"));
+    } catch (err: any) {
+      setError(err?.type ? t("auth.loginFailed") : t("auth.networkError"));
       setLoading(false);
     }
   };

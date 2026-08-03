@@ -110,6 +110,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    // Delete the SDK session first (keeps localStorage fallback in sync),
+    // then clear the server cookie.
+    await account.deleteSession("current").catch(() => {});
     await fetch("/api/auth/logout", { method: "POST" });
     setUser(null);
     setProfile(null);

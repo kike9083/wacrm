@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 
 const ENDPOINT = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!
 const PROJECT_ID = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!
+const SESSION_COOKIE = 'wacrm_session'
 
 async function getSessionUser(sessionSecret: string) {
   try {
@@ -19,8 +20,8 @@ async function getSessionUser(sessionSecret: string) {
   }
 }
 
-export async function middleware(request: NextRequest) {
-  const sessionCookie = request.cookies.get('appwrite-session')
+export async function proxy(request: NextRequest) {
+  const sessionCookie = request.cookies.get(SESSION_COOKIE)
   const user = sessionCookie?.value ? await getSessionUser(sessionCookie.value) : null
 
   if (user && (

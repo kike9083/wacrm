@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
@@ -12,7 +11,6 @@ import { Header } from "@/components/layout/header";
 
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
-  const router = useRouter();
 
   // Sidebar drawer state — only used on mobile. On lg+ the sidebar is
   // always visible and this stays at `false` (ignored by the component).
@@ -21,9 +19,14 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!loading && !user) {
-      router.push("/login");
+      // Full navigation (not router.push) so middleware re-evaluates the
+      // session server-side. Best-effort logout first clears any stale
+      // session cookie that would otherwise bounce us back to /dashboard.
+      fetch("/api/auth/logout", { method: "POST" })
+        .catch(() => {})
+        .finally(() => window.location.assign("/login"));
     }
-  }, [user, loading, router]);
+  }, [user, loading]);
 
   if (loading) {
     return (

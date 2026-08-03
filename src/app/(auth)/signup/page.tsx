@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
 
-import { client } from "@/lib/appwrite/client";
+import { account } from "@/lib/appwrite/client";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,15 +51,25 @@ export default function SignupPage() {
         body: JSON.stringify({ email, password, name: fullName }),
       });
 
-      const data = await res.json();
-
       if (!res.ok) {
+        const data = await res.json();
         setError(data.error || t("auth.signupFailed"));
         setLoading(false);
         return;
       }
 
-      client.setSession(data.secret);
+      const session = await account.createEmailPasswordSession(email, password);
+      const res2 = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret: session.secret }),
+      });
+      if (!res2.ok) {
+        await account.deleteSession("current").catch(() => {});
+        setError(t("auth.signupFailed"));
+        setLoading(false);
+        return;
+      }
       router.push("/dashboard");
     } catch {
       setError(t("auth.networkError"));

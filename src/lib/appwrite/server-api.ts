@@ -30,18 +30,14 @@ export async function request(method: string, path: string, body?: unknown, sess
   return data
 }
 
-export async function createUserSession(email: string, password: string) {
-  return request('POST', '/account/sessions/email', { email, password })
-}
-
 export async function createAccount(email: string, password: string, name: string) {
   const account = await request('POST', '/account', { userId: 'unique()', email, password, name })
   await request('PATCH', `/users/${account.$id}/verification`, { emailVerification: true })
   return account
 }
 
-export async function deleteSession(sessionId: string) {
-  return request('DELETE', `/account/sessions/${sessionId}`)
+export async function deleteSession(sessionId: string, session?: string) {
+  return request('DELETE', `/account/sessions/${sessionId}`, undefined, session)
 }
 
 export async function createRecovery(email: string, redirectUrl: string) {
@@ -50,12 +46,4 @@ export async function createRecovery(email: string, redirectUrl: string) {
 
 export async function getAccount(session: string) {
   return request('GET', '/account', undefined, session)
-}
-
-export async function listSessions() {
-  return request('GET', '/account/sessions')
-}
-
-export async function getSessions() {
-  return request('GET', '/account/sessions')
 }

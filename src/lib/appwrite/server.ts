@@ -7,7 +7,7 @@ export async function createSessionClient() {
     .setProject(process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
 
   const cookieStore = await cookies()
-  const session = cookieStore.get('appwrite-session')
+  const session = cookieStore.get('wacrm_session')
   if (session?.value) {
     client.setSession(session.value)
   }
