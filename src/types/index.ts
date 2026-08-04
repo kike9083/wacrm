@@ -80,6 +80,9 @@ export interface Conversation {
   created_at: string;
   updated_at: string;
   contact?: Contact;
+  ai_autoreply_disabled?: boolean;
+  ai_reply_count?: number;
+  ai_handoff_summary?: string | null;
 }
 
 export type SenderType = 'customer' | 'agent' | 'bot';
@@ -115,6 +118,7 @@ export interface Message {
    * cue (renders with a "↩ button reply" affordance).
    */
   interactive_reply_id?: string;
+  ai_generated?: boolean;
 }
 
 export type ReactionActor = 'customer' | 'agent';

@@ -24,9 +24,11 @@ import {
   Clock,
   ArrowLeft,
   RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { Badge } from "@/components/ui/badge";
+import { AiThreadBanner } from "./ai-thread-banner";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -840,6 +842,25 @@ export function MessageThread({
         </div>
       </div>
 
+      {/* AI auto-reply banner */}
+      {conversation && (
+        <AiThreadBanner
+          conversationId={conversation.id}
+          disabled={Boolean(conversation.ai_autoreply_disabled)}
+          handoffSummary={conversation.ai_handoff_summary}
+          assignedAgentId={assignedAgentId}
+          currentUserId={user?.id}
+          onChange={(patch) => {
+            if (patch.ai_autoreply_disabled !== undefined) {
+              (conversation as any).ai_autoreply_disabled = patch.ai_autoreply_disabled;
+            }
+            if (patch.assigned_agent_id !== undefined) {
+              (conversation as any).assigned_agent_id = patch.assigned_agent_id;
+            }
+          }}
+        />
+      )}
+
       {/* Messages Area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
         {loading ? (
@@ -896,13 +917,20 @@ export function MessageThread({
                           if (emoji) void postReaction(msg.id, emoji);
                         }}
                       >
-                        <MessageBubble
-                          message={msg}
-                          reply={reply}
-                          reactions={msgReactions}
-                          currentUserId={user?.id}
-                          onToggleReaction={handlePillToggle}
-                        />
+                        <div className="relative">
+                          <MessageBubble
+                            message={msg}
+                            reply={reply}
+                            reactions={msgReactions}
+                            currentUserId={user?.id}
+                            onToggleReaction={handlePillToggle}
+                          />
+                          {msg.ai_generated && msg.sender_type === "agent" && (
+                            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary/20" title="AI generated">
+                              <Sparkles className="h-2.5 w-2.5 text-primary" />
+                            </span>
+                          )}
+                        </div>
                       </MessageActions>
                     );
                   })}

@@ -31,6 +31,8 @@ interface SendTextEngineArgs {
   conversationId: string
   contactId: string
   text: string
+  /** Mark the outgoing message as AI-generated (badge in the inbox). */
+  aiGenerated?: boolean
 }
 
 /**
@@ -121,6 +123,7 @@ export async function engineSendText(
         content_text: args.text,
         message_id: waMessageId,
         status: 'sent',
+        ai_generated: args.aiGenerated ? true : null,
       }
     )
   } catch (err) {

@@ -9,6 +9,7 @@ import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 
 // Lazy-initialized Appwrite admin client
 let _admin: ReturnType<typeof createAdminClient> | null = null
@@ -724,6 +725,16 @@ async function processMessage(
         conversation_id: conversation.$id,
       },
     }).catch((err) => console.error('[automations] dispatch failed:', err))
+  }
+
+  // AI auto-reply — fire-and-forget after automations and flows.
+  // Flows win: if a flow consumed the message, skip AI.
+  if (!flowConsumed) {
+    dispatchInboundToAiReply({
+      userId,
+      conversationId: conversation.$id,
+      contactId: contactRecord.$id,
+    }).catch((err) => console.error('[ai-autoreply] dispatch failed:', err))
   }
 }
 

@@ -16,6 +16,7 @@ import {
   Radio,
   Zap,
   Workflow,
+  Bot,
   Settings,
   LogOut,
   User,
@@ -42,6 +43,7 @@ const NAV_KEYS: { href: string; key: string; icon: typeof LayoutDashboard; beta?
   { href: "/broadcasts", key: "nav.broadcasts", icon: Radio },
   { href: "/automations", key: "nav.automations", icon: Zap },
   { href: "/flows", key: "nav.flows", icon: Workflow, beta: true },
+  { href: "/agents", key: "nav.agents", icon: Bot },
 ];
 
 const BOTTOM_NAV_KEYS = [

@@ -125,6 +125,16 @@ export const RATE_LIMITS = {
    *  fidget with reactions and a single "swap" is actually two calls
    *  (remove + add) under the hood. */
   react: { limit: 120, windowMs: 60_000 },
+  /** AI draft draws per user. 15/min is plenty for composing replies;
+   *  every draw also costs the account's own provider key. */
+  aiDraft: { limit: 15, windowMs: 60_000 },
+  /** Team-wide cap on the shared BYO provider key for drafts. */
+  aiDraftAccount: { limit: 30, windowMs: 60_000 },
+  /** Admin AI actions (config save / test / KB write). */
+  adminAction: { limit: 20, windowMs: 60_000 },
+  /** Auto-reply draws across ALL conversations (shared key). 30/min
+   *  bounds a burst without starving a live conversation. */
+  aiAutoReplyAccount: { limit: 30, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't

@@ -26,6 +26,10 @@ export const COLLECTIONS = {
   flowNodes: 'flow_nodes',
   flowRuns: 'flow_runs',
   flowRunEvents: 'flow_run_events',
+  aiConfigs: 'ai_configs',
+  aiKnowledgeDocuments: 'ai_knowledge_documents',
+  aiKnowledgeChunks: 'ai_knowledge_chunks',
+  aiUsageLog: 'ai_usage_log',
 } as const
 
 export type CollectionName = keyof typeof COLLECTIONS
