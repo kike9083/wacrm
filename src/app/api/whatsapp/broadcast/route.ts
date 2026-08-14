@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server'
 import { createSessionClient, createAdminClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { Query } from 'node-appwrite'
-import { createMetaDriver } from '@/lib/whatsapp/driver'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { createDriverFromConfig } from '@/lib/whatsapp/driver'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -120,9 +119,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const accessToken = decrypt(config.access_token)
-
-    const driver = createMetaDriver({ phoneNumberId: config.phone_number_id, accessToken })
+    const driver = createDriverFromConfig(config)
 
     const results: BroadcastResult[] = []
     let sentCount = 0

@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient, createSessionClient } from '@/lib/appwrite/server';
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
 import { ID, Query } from 'node-appwrite';
-import { createMetaDriver } from '@/lib/whatsapp/driver';
-import { decrypt } from '@/lib/whatsapp/encryption';
+import { createDriverFromConfig } from '@/lib/whatsapp/driver';
 import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils';
 import {
   checkRateLimit,
@@ -137,10 +136,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const accessToken = decrypt(config.access_token);
     const sanitizedPhone = sanitizePhoneForMeta(contact.phone);
 
-    const driver = createMetaDriver({ phoneNumberId: config.phone_number_id, accessToken })
+    const driver = createDriverFromConfig(config)
 
     try {
       await driver.sendReaction(sanitizedPhone, {

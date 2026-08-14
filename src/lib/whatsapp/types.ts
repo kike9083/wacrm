@@ -79,4 +79,4 @@ export interface WhatsAppDriver {
   verifyConnection(): Promise<PhoneInfo>
 }
 
-export type DriverType = 'meta'
+export type DriverType = 'meta' | 'waha'

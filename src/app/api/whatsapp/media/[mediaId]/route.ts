@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { Query } from 'node-appwrite'
-import { createMetaDriver } from '@/lib/whatsapp/driver'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { createDriverFromConfig } from '@/lib/whatsapp/driver'
 
 export async function GET(
   request: Request,
@@ -52,8 +51,7 @@ export async function GET(
         { status: 400 }
       )
     }
-    const accessToken = decrypt(config.access_token)
-    const driver = createMetaDriver({ phoneNumberId: config.phone_number_id, accessToken })
+    const driver = createDriverFromConfig(config)
 
     // Get the download URL and download the binary data
     const mediaInfo = await driver.getMediaUrl(mediaId)

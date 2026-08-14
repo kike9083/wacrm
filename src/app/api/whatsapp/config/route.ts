@@ -2,7 +2,13 @@ import { NextResponse } from 'next/server'
 import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
-import { createMetaDriver } from '@/lib/whatsapp/driver'
+import {
+  createDriverFromConfig,
+  createMetaDriver,
+  createWahaDriver,
+  driverTypeOf,
+  type WhatsAppConfigRow,
+} from '@/lib/whatsapp/driver'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 
 /**
@@ -16,7 +22,7 @@ import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
  *   { connected: true,  phone_info: {...} }
  *   { connected: false, reason: 'no_config',        message: '...' }
  *   { connected: false, reason: 'token_corrupted',  message: '...', needs_reset: true }
- *   { connected: false, reason: 'meta_api_error',   message: '...' }
+ *   { connected: false, reason: 'provider_error',   message: '...' }
  */
 export async function GET() {
   try {
@@ -28,7 +34,7 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Meta driver: read config from DB
+    // Read config from DB
     const { databases } = createAdminClient()
     let configs
     try {
@@ -56,37 +62,41 @@ export async function GET() {
       )
     }
 
-    // Try to decrypt the stored token with the current ENCRYPTION_KEY.
-    let accessToken: string
-    try {
-      accessToken = decrypt(config.access_token)
-    } catch (err) {
-      console.error('[whatsapp/config GET] Token decryption failed:', err)
-      return NextResponse.json(
-        {
-          connected: false,
-          reason: 'token_corrupted',
-          needs_reset: true,
-          message:
-            'The stored access token cannot be decrypted with the current ENCRYPTION_KEY. This usually means the key changed, or it differs between environments (local vs Hostinger vs Vercel). Click "Reset Configuration" below, then re-save.',
-        },
-        { status: 200 }
-      )
+    // Meta rows store the access token encrypted. Try to decrypt it with
+    // the current ENCRYPTION_KEY so a key mismatch surfaces as a clear
+    // "reset required" instead of a confusing provider error. WAHA rows
+    // keep their secrets encrypted too but the driver handles those.
+    if (driverTypeOf(config) === 'meta') {
+      try {
+        decrypt(config.access_token)
+      } catch (err) {
+        console.error('[whatsapp/config GET] Token decryption failed:', err)
+        return NextResponse.json(
+          {
+            connected: false,
+            reason: 'token_corrupted',
+            needs_reset: true,
+            message:
+              'The stored access token cannot be decrypted with the current ENCRYPTION_KEY. This usually means the key changed, or it differs between environments (local vs Hostinger vs Vercel). Click "Reset Configuration" below, then re-save.',
+          },
+          { status: 200 }
+        )
+      }
     }
 
-    // Validate credentials against Meta
+    // Validate credentials against the configured provider
     try {
-      const driver = createMetaDriver({ phoneNumberId: config.phone_number_id, accessToken })
+      const driver = createDriverFromConfig(config as WhatsAppConfigRow)
       const phoneInfo = await driver.verifyConnection()
       return NextResponse.json({ connected: true, phone_info: phoneInfo })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown Meta API error'
-      console.error('[whatsapp/config GET] Meta API verification failed:', message)
+      const message = err instanceof Error ? err.message : 'Unknown provider error'
+      console.error('[whatsapp/config GET] Provider verification failed:', message)
       return NextResponse.json(
         {
           connected: false,
-          reason: 'meta_api_error',
-          message: `Meta API rejected the credentials: ${message}`,
+          reason: 'provider_error',
+          message: `Provider rejected the credentials: ${message}`,
         },
         { status: 200 }
       )
@@ -104,7 +114,10 @@ export async function GET() {
  * POST /api/whatsapp/config
  *
  * Saves or updates the WhatsApp config for the authenticated user.
- * Verifies credentials with Meta first, then encrypts and stores.
+ * Verifies credentials with the chosen provider first, then encrypts
+ * and stores. Provider selection (`driver`):
+ *   - `meta` (default): Meta Cloud API — phone_number_id + access_token
+ *   - `waha`: self-hosted WAHA — base_url + api_key + session
  */
 export async function POST(request: Request) {
   try {
@@ -117,9 +130,28 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { phone_number_id, waba_id, access_token, verify_token } = body
+    const {
+      driver,
+      phone_number_id,
+      waba_id,
+      access_token,
+      verify_token,
+      waha_base_url,
+      waha_api_key,
+      waha_session,
+      waha_webhook_secret,
+    } = body
 
-    if (!access_token || !phone_number_id) {
+    const isWaha = driver === 'waha'
+
+    if (isWaha) {
+      if (!waha_base_url || !waha_api_key || !waha_session) {
+        return NextResponse.json(
+          { error: 'waha_base_url, waha_api_key and waha_session are required for WAHA' },
+          { status: 400 }
+        )
+      }
+    } else if (!access_token || !phone_number_id) {
       return NextResponse.json(
         { error: 'access_token and phone_number_id are required' },
         { status: 400 }
@@ -129,8 +161,17 @@ export async function POST(request: Request) {
     // Verify credentials BEFORE saving
     let phoneInfo
     try {
-      const driver = createMetaDriver({ phoneNumberId: phone_number_id, accessToken: access_token })
-      phoneInfo = await driver.verifyConnection()
+      const driverInstance = isWaha
+        ? createWahaDriver({
+            baseUrl: waha_base_url,
+            apiKey: waha_api_key,
+            session: waha_session,
+          })
+        : createMetaDriver({
+            phoneNumberId: phone_number_id,
+            accessToken: access_token,
+          })
+      phoneInfo = await driverInstance.verifyConnection()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown API error'
       console.error('API verification failed during save:', message)
@@ -141,11 +182,20 @@ export async function POST(request: Request) {
     }
 
     // Encrypt sensitive tokens before storing
-    let encryptedAccessToken: string
-    let encryptedVerifyToken: string | null
+    let encryptedAccessToken: string | null = null
+    let encryptedVerifyToken: string | null = null
+    let encryptedWahaApiKey: string | null = null
+    let encryptedWahaWebhookSecret: string | null = null
     try {
-      encryptedAccessToken = encrypt(access_token)
-      encryptedVerifyToken = verify_token ? encrypt(verify_token) : null
+      if (isWaha) {
+        encryptedWahaApiKey = encrypt(waha_api_key)
+        if (waha_webhook_secret) {
+          encryptedWahaWebhookSecret = encrypt(waha_webhook_secret)
+        }
+      } else {
+        encryptedAccessToken = encrypt(access_token)
+        encryptedVerifyToken = verify_token ? encrypt(verify_token) : null
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown encryption error'
       console.error('Encryption failed:', message)
@@ -175,21 +225,40 @@ export async function POST(request: Request) {
     }
     const existing = existingDocs.documents[0]
 
+    const data: Record<string, unknown> = {
+      driver: isWaha ? 'waha' : 'meta',
+      status: 'connected',
+      connected_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+
+    if (isWaha) {
+      data.waha_base_url = waha_base_url.replace(/\/+$/, '')
+      data.waha_api_key = encryptedWahaApiKey
+      data.waha_session = waha_session
+      data.waha_webhook_secret = encryptedWahaWebhookSecret
+      data.phone_number_id = null
+      data.access_token = null
+      data.verify_token = null
+      data.waba_id = null
+    } else {
+      data.phone_number_id = phone_number_id
+      data.waba_id = waba_id || null
+      data.access_token = encryptedAccessToken
+      data.verify_token = encryptedVerifyToken
+      data.waha_base_url = null
+      data.waha_api_key = null
+      data.waha_session = null
+      data.waha_webhook_secret = null
+    }
+
     if (existing) {
       try {
         await databases.updateDocument(
           DATABASE_ID,
           COLLECTIONS.whatsappConfig,
           existing.$id,
-          {
-            phone_number_id,
-            waba_id: waba_id || null,
-            access_token: encryptedAccessToken,
-            verify_token: encryptedVerifyToken,
-            status: 'connected',
-            connected_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }
+          data
         )
       } catch (error) {
         console.error('Error updating whatsapp_config:', error)
@@ -206,12 +275,7 @@ export async function POST(request: Request) {
           ID.unique(),
           {
             user_id: user.$id,
-            phone_number_id,
-            waba_id: waba_id || null,
-            access_token: encryptedAccessToken,
-            verify_token: encryptedVerifyToken,
-            status: 'connected',
-            connected_at: new Date().toISOString(),
+            ...data,
           }
         )
       } catch (error) {

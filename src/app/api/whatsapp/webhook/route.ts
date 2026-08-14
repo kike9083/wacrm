@@ -3,7 +3,8 @@ import { createAdminClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { createMetaDriver } from '@/lib/whatsapp/driver'
+import { createDriverFromConfig } from '@/lib/whatsapp/driver'
+import type { WhatsAppConfigRow } from '@/lib/whatsapp/driver'
 import type { WhatsAppDriver } from '@/lib/whatsapp/types'
 import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
@@ -20,7 +21,7 @@ function adminDb() {
   return _admin.databases
 }
 
-interface WhatsAppMessage {
+export interface WhatsAppMessage {
   id: string
   from: string
   timestamp: string
@@ -224,24 +225,40 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
         continue
       }
 
-      const decryptedAccessToken = decrypt(config.access_token)
-
-      for (let i = 0; i < value.messages.length; i++) {
-        const message = value.messages[i]
-        const contact = value.contacts[i] || value.contacts[0]
-
-        const metaDriver = createMetaDriver({
-          phoneNumberId: config.phone_number_id,
-          accessToken: decryptedAccessToken,
-        })
-        await processMessage(
-          message,
-          contact,
-          config.user_id,
-          metaDriver
-        )
-      }
+      await processMessagesForConfig(
+        config,
+        value.messages,
+        value.contacts,
+      )
     }
+  }
+}
+
+/**
+ * Run the inbound pipeline for a config that has already been resolved.
+ *
+ * Extracted from `processWebhook` so the WAHA webhook route can reuse
+ * it — WAHA resolves the config by session name (there is no
+ * phone_number_id), then feeds the adapted messages through here. The
+ * Meta route keeps its phone_number_id lookup and then calls this.
+ */
+export async function processMessagesForConfig(
+  config: WhatsAppConfigRow,
+  messages: WhatsAppMessage[],
+  contacts: Array<{ profile: { name: string }; wa_id: string }>,
+) {
+  const driver = createDriverFromConfig(config)
+
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i]
+    const contact = contacts[i] || contacts[0]
+
+    await processMessage(
+      message,
+      contact,
+      config.user_id,
+      driver
+    )
   }
 }
 
@@ -287,7 +304,7 @@ function isValidStatusTransition(current: string, incoming: string): boolean {
   return ii > ci
 }
 
-async function handleStatusUpdate(status: {
+export async function handleStatusUpdate(status: {
   id: string
   status: string
   timestamp: string

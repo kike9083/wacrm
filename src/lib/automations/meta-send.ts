@@ -1,5 +1,4 @@
-import { createMetaDriver } from '@/lib/whatsapp/driver'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { createDriverFromConfig } from '@/lib/whatsapp/driver'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -82,7 +81,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const driver = createMetaDriver({ phoneNumberId: (config as any).phone_number_id, accessToken: decrypt((config as any).access_token) })
+  const driver = createDriverFromConfig(config)
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'template') {

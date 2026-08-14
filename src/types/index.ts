@@ -136,10 +136,15 @@ export interface MessageReaction {
 export interface WhatsAppConfig {
   id: string;
   user_id: string;
-  phone_number_id: string;
+  phone_number_id?: string;
   waba_id?: string;
-  access_token: string;
+  access_token?: string;
   verify_token?: string;
+  driver?: 'meta' | 'waha';
+  waha_base_url?: string;
+  waha_api_key?: string;
+  waha_session?: string;
+  waha_webhook_secret?: string;
   status: 'connected' | 'disconnected';
   connected_at?: string;
 }

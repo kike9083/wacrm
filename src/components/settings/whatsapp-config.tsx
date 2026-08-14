@@ -30,12 +30,14 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from '@/components/ui/accordion';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
 
 const MASKED_TOKEN = '••••••••••••••••';
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
-type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
+type ResetReason = 'token_corrupted' | 'provider_error' | null;
+type DriverType = 'meta' | 'waha';
 
 export function WhatsAppConfig() {
   const { user, loading: authLoading } = useAuth();
@@ -46,20 +48,29 @@ export function WhatsAppConfig() {
   const [testing, setTesting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showToken, setShowToken] = useState(false);
+  const [showWahaApiKey, setShowWahaApiKey] = useState(false);
   const [config, setConfig] = useState<WhatsAppConfigType | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
 
+  const [driver, setDriver] = useState<DriverType>('meta');
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [wabaId, setWabaId] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [verifyToken, setVerifyToken] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
+  const [wahaBaseUrl, setWahaBaseUrl] = useState('');
+  const [wahaApiKey, setWahaApiKey] = useState('');
+  const [wahaSession, setWahaSession] = useState('');
+  const [wahaWebhookSecret, setWahaWebhookSecret] = useState('');
+  const [wahaKeyEdited, setWahaKeyEdited] = useState(false);
 
   const webhookUrl =
     typeof window !== 'undefined'
-      ? `${window.location.origin}/api/whatsapp/webhook`
+      ? `${window.location.origin}/api/whatsapp/${
+          driver === 'waha' ? 'waha-webhook' : 'webhook'
+        }`
       : '';
 
   const fetchConfig = useCallback(async (userId: string) => {
@@ -80,18 +91,31 @@ export function WhatsAppConfig() {
 
       if (data) {
         setConfig(data);
+        const savedDriver: DriverType = data.driver === 'waha' ? 'waha' : 'meta';
+        setDriver(savedDriver);
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
         setAccessToken(MASKED_TOKEN);
         setVerifyToken('');
+        setWahaBaseUrl(data.waha_base_url || '');
+        setWahaApiKey(data.waha_api_key ? MASKED_TOKEN : '');
+        setWahaSession(data.waha_session || '');
+        setWahaWebhookSecret(data.waha_webhook_secret ? MASKED_TOKEN : '');
         setTokenEdited(false);
+        setWahaKeyEdited(false);
       } else {
         setConfig(null);
+        setDriver('meta');
         setPhoneNumberId('');
         setWabaId('');
         setAccessToken('');
         setVerifyToken('');
+        setWahaBaseUrl('');
+        setWahaApiKey('');
+        setWahaSession('');
+        setWahaWebhookSecret('');
         setTokenEdited(false);
+        setWahaKeyEdited(false);
       }
 
       // Then verify health via the API (decrypts token + pings Meta)
@@ -106,7 +130,7 @@ export function WhatsAppConfig() {
             setStatusMessage('');
           } else {
             setConnectionStatus('disconnected');
-            setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
+            setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'provider_error' ? 'provider_error' : null);
             setStatusMessage(payload.message || '');
           }
         } catch (err) {
@@ -136,38 +160,72 @@ export function WhatsAppConfig() {
   }, [authLoading, user, fetchConfig]);
 
   async function handleSave() {
-    if (!phoneNumberId.trim()) {
+    const isWaha = driver === 'waha';
+
+    if (!isWaha && !phoneNumberId.trim()) {
       toast.error(t('settings.whatsapp.phoneRequired'));
       return;
     }
-    if (!config && (!accessToken.trim() || !tokenEdited)) {
+    if (!isWaha && !config && (!accessToken.trim() || !tokenEdited)) {
       toast.error(t('settings.whatsapp.tokenRequired'));
+      return;
+    }
+    if (isWaha && !wahaBaseUrl.trim()) {
+      toast.error(t('settings.whatsapp.wahaBaseUrlRequired'));
+      return;
+    }
+    if (isWaha && !config && (!wahaApiKey.trim() || !wahaKeyEdited)) {
+      toast.error(t('settings.whatsapp.wahaApiKeyRequired'));
+      return;
+    }
+    if (isWaha && !wahaSession.trim()) {
+      toast.error(t('settings.whatsapp.wahaSessionRequired'));
       return;
     }
 
     try {
       setSaving(true);
 
-      // Always POST through the API — it verifies with Meta and encrypts
-      // the access_token server-side with ENCRYPTION_KEY. Skipping this
-      // and writing direct to Supabase stores the token in plaintext,
-      // which then fails decryption on every subsequent health check.
+      // Always POST through the API — it verifies with the provider and
+      // encrypts secrets server-side with ENCRYPTION_KEY. Skipping this
+      // and writing direct to the DB stores tokens in plaintext, which
+      // then fails decryption on every subsequent health check.
       const payload: Record<string, unknown> = {
-        phone_number_id: phoneNumberId.trim(),
-        waba_id: wabaId.trim() || null,
-        verify_token: verifyToken.trim() || null,
+        driver: isWaha ? 'waha' : 'meta',
       };
 
-      if (tokenEdited && accessToken !== MASKED_TOKEN && accessToken.trim()) {
-        payload.access_token = accessToken.trim();
-      } else if (config) {
-        // Existing config — reuse stored encrypted token by decrypting on the
-        // server. But our POST handler requires an access_token to verify
-        // with Meta. If the user didn't change the token, we need to signal
-        // that. Simplest: require token re-entry if they're updating.
-        toast.error(t('settings.whatsapp.tokenReenter'));
-        setSaving(false);
-        return;
+      if (isWaha) {
+        payload.waha_base_url = wahaBaseUrl.trim();
+        payload.waha_session = wahaSession.trim();
+        if (wahaKeyEdited && wahaApiKey !== MASKED_TOKEN && wahaApiKey.trim()) {
+          payload.waha_api_key = wahaApiKey.trim();
+        } else if (config) {
+          toast.error(t('settings.whatsapp.tokenReenter'));
+          setSaving(false);
+          return;
+        }
+        if (
+          wahaWebhookSecret !== MASKED_TOKEN &&
+          wahaWebhookSecret.trim()
+        ) {
+          payload.waha_webhook_secret = wahaWebhookSecret.trim();
+        }
+      } else {
+        payload.phone_number_id = phoneNumberId.trim();
+        payload.waba_id = wabaId.trim() || null;
+        payload.verify_token = verifyToken.trim() || null;
+
+        if (tokenEdited && accessToken !== MASKED_TOKEN && accessToken.trim()) {
+          payload.access_token = accessToken.trim();
+        } else if (config) {
+          // Existing config — reuse stored encrypted token by decrypting on the
+          // server. But our POST handler requires an access_token to verify
+          // with Meta. If the user didn't change the token, we need to signal
+          // that. Simplest: require token re-entry if they're updating.
+          toast.error(t('settings.whatsapp.tokenReenter'));
+          setSaving(false);
+          return;
+        }
       }
 
       const res = await fetch('/api/whatsapp/config', {
@@ -216,7 +274,7 @@ export function WhatsAppConfig() {
         );
       } else {
         setConnectionStatus('disconnected');
-        setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
+        setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'provider_error' ? 'provider_error' : null);
         setStatusMessage(payload.message || '');
         toast.error(payload.message || t('settings.whatsapp.testFailed'));
       }
@@ -246,11 +304,17 @@ export function WhatsAppConfig() {
 
       toast.success(t('settings.whatsapp.resetSuccess'));
       setConfig(null);
+      setDriver('meta');
       setPhoneNumberId('');
       setWabaId('');
       setAccessToken('');
       setVerifyToken('');
+      setWahaBaseUrl('');
+      setWahaApiKey('');
+      setWahaSession('');
+      setWahaWebhookSecret('');
       setTokenEdited(false);
+      setWahaKeyEdited(false);
       setConnectionStatus('disconnected');
       setResetReason(null);
       setStatusMessage('');
@@ -345,6 +409,97 @@ export function WhatsAppConfig() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Provider selector */}
+            <div className="space-y-2">
+              <Label className="text-slate-300">{t('settings.whatsapp.provider')}</Label>
+              <RadioGroup
+                value={driver}
+                onValueChange={(value) => setDriver(value as DriverType)}
+                className="grid grid-cols-2 gap-2"
+              >
+                <label className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-300 cursor-pointer has-data-checked:border-primary has-data-checked:bg-primary/10">
+                  <RadioGroupItem value="meta" />
+                  {t('settings.whatsapp.providerMeta')}
+                </label>
+                <label className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-300 cursor-pointer has-data-checked:border-primary has-data-checked:bg-primary/10">
+                  <RadioGroupItem value="waha" />
+                  {t('settings.whatsapp.providerWaha')}
+                </label>
+              </RadioGroup>
+            </div>
+
+            {driver === 'waha' ? (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-slate-300">{t('settings.whatsapp.wahaBaseUrl')}</Label>
+                  <Input
+                    placeholder={t('settings.whatsapp.wahaBaseUrlPlaceholder')}
+                    value={wahaBaseUrl}
+                    onChange={(e) => setWahaBaseUrl(e.target.value)}
+                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-slate-300">{t('settings.whatsapp.wahaSession')}</Label>
+                  <Input
+                    placeholder={t('settings.whatsapp.wahaSessionPlaceholder')}
+                    value={wahaSession}
+                    onChange={(e) => setWahaSession(e.target.value)}
+                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-slate-300">{t('settings.whatsapp.wahaApiKey')}</Label>
+                  <div className="relative">
+                    <Input
+                      type={showWahaApiKey ? 'text' : 'password'}
+                      placeholder={t('settings.whatsapp.wahaApiKeyPlaceholder')}
+                      value={wahaApiKey}
+                      onChange={(e) => {
+                        setWahaApiKey(e.target.value);
+                        setWahaKeyEdited(true);
+                      }}
+                      onFocus={() => {
+                        if (wahaApiKey === MASKED_TOKEN) {
+                          setWahaApiKey('');
+                          setWahaKeyEdited(true);
+                        }
+                      }}
+                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowWahaApiKey(!showWahaApiKey)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
+                    >
+                      {showWahaApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {config && !wahaKeyEdited && (
+                    <p className="text-xs text-slate-500">
+                      {t('settings.whatsapp.tokenHidden')}
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-slate-300">{t('settings.whatsapp.wahaWebhookSecret')}</Label>
+                  <Input
+                    type="password"
+                    placeholder={t('settings.whatsapp.wahaWebhookSecretPlaceholder')}
+                    value={wahaWebhookSecret}
+                    onChange={(e) => setWahaWebhookSecret(e.target.value)}
+                    className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                  />
+                  <p className="text-xs text-slate-500">
+                    {t('settings.whatsapp.wahaWebhookSecretDescription')}
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
             <div className="space-y-2">
               <Label className="text-slate-300">{t('settings.whatsapp.phoneNumberId')}</Label>
               <Input
@@ -411,6 +566,8 @@ export function WhatsAppConfig() {
                 {t('settings.whatsapp.webhookVerifyDescription')}
               </p>
             </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -440,6 +597,11 @@ export function WhatsAppConfig() {
                   <Copy className="size-4" />
                 </Button>
               </div>
+              {driver === 'waha' && (
+                <p className="text-xs text-slate-500">
+                  {t('settings.whatsapp.wahaWebhookHint')}
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -582,15 +744,27 @@ export function WhatsAppConfig() {
             </Accordion>
 
             <div className="mt-4 pt-4 border-t border-slate-700">
-              <a
-                href="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 transition-colors"
-              >
-                <ExternalLink className="size-3.5" />
-                {t('settings.whatsapp.documentation')}
-              </a>
+              {driver === 'waha' ? (
+                <a
+                  href="https://waha.devlike.pro/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 transition-colors"
+                >
+                  <ExternalLink className="size-3.5" />
+                  {t('settings.whatsapp.wahaDocumentation')}
+                </a>
+              ) : (
+                <a
+                  href="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 transition-colors"
+                >
+                  <ExternalLink className="size-3.5" />
+                  {t('settings.whatsapp.documentation')}
+                </a>
+              )}
             </div>
           </CardContent>
         </Card>

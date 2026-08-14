@@ -1,6 +1,5 @@
-import { createMetaDriver } from '@/lib/whatsapp/driver'
+import { createDriverFromConfig } from '@/lib/whatsapp/driver'
 import type { InteractiveButton, InteractiveListSection } from '@/lib/whatsapp/types'
-import { decrypt } from '@/lib/whatsapp/encryption'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -80,7 +79,7 @@ export async function engineSendText(
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const driver = createMetaDriver({ phoneNumberId: (config as any).phone_number_id, accessToken: decrypt((config as any).access_token) })
+  const driver = createDriverFromConfig(config)
 
   const attempt = async (phone: string): Promise<string> => {
     const r = await driver.sendText(phone, args.text)
@@ -224,7 +223,7 @@ async function sendInteractiveViaMeta(
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const driver = createMetaDriver({ phoneNumberId: (config as any).phone_number_id, accessToken: decrypt((config as any).access_token) })
+  const driver = createDriverFromConfig(config)
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'buttons') {
