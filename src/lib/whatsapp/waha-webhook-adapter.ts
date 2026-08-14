@@ -78,6 +78,9 @@ export function wahaMessageToMeta(
   }
 
   if (type === 'text' || type === 'chat') {
+    // WAHA reports plain text messages with `type: chat`; normalize the
+    // type so the pipeline's parseMessageContent switch handles it.
+    base.type = 'text'
     base.text = { body: typeof payload.body === 'string' ? payload.body : '' }
     return base
   }
