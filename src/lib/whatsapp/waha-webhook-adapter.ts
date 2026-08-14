@@ -77,7 +77,7 @@ export function wahaMessageToMeta(
     base.context = { id: replyTo.id }
   }
 
-  if (type === 'text') {
+  if (type === 'text' || type === 'chat') {
     base.text = { body: typeof payload.body === 'string' ? payload.body : '' }
     return base
   }
