@@ -41,7 +41,16 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  if (!user && request.nextUrl.pathname.startsWith('/api/whatsapp/')) {
+  // Public webhook targets — verified out-of-band (HMAC / signature) and
+  // called by providers that have no browser session. Everything else under
+  // /api/whatsapp/* requires authentication.
+  const publicWebhooks = ['/api/whatsapp/webhook', '/api/whatsapp/waha-webhook']
+  const isPublicWebhook = publicWebhooks.some(
+    (path) =>
+      request.nextUrl.pathname === path ||
+      request.nextUrl.pathname.startsWith(`${path}/`),
+  )
+  if (!user && !isPublicWebhook && request.nextUrl.pathname.startsWith('/api/whatsapp/')) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
