@@ -26,6 +26,24 @@ export interface WahaDriverConfig {
 }
 
 /**
+ * WAHA's send endpoints return the created message; its `id` field can be
+ * a plain string OR a structured object (`{ fromMe, remote, id, _serialized }`)
+ * depending on engine/version. The CRM persists `message_id` as a string
+ * (Appwrite string attribute, max 255 chars), so normalize both shapes.
+ * Prefer `_serialized` (the canonical WAHA id) and fall back to the raw
+ * string / `.id` — never hand an object to Appwrite.
+ */
+function normalizeWahaId(id: unknown): string {
+  if (typeof id === 'string') return id
+  if (id && typeof id === 'object') {
+    const obj = id as { _serialized?: unknown; id?: unknown }
+    if (typeof obj._serialized === 'string') return obj._serialized
+    if (typeof obj.id === 'string') return obj.id
+  }
+  return ''
+}
+
+/**
  * WhatsAppDriver implementation backed by a self-hosted WAHA instance.
  *
  * Behavioral notes (deliberate deviations from Meta Cloud API):
@@ -78,7 +96,7 @@ export class WahaDriver implements WhatsAppDriver {
         ? { replyTo: options.contextMessageId }
         : {}),
     })
-    return { messageId: result.id }
+    return { messageId: normalizeWahaId(result.id) }
   }
 
   async sendTemplate(
@@ -98,7 +116,7 @@ export class WahaDriver implements WhatsAppDriver {
         ? { replyTo: options.contextMessageId }
         : {}),
     })
-    return { messageId: result.id }
+    return { messageId: normalizeWahaId(result.id) }
   }
 
   async sendReaction(
@@ -111,7 +129,7 @@ export class WahaDriver implements WhatsAppDriver {
       messageId: options.targetMessageId,
       emoji: options.emoji,
     })
-    return { messageId: result.id }
+    return { messageId: normalizeWahaId(result.id) }
   }
 
   async sendInteractiveButtons(
@@ -144,7 +162,7 @@ export class WahaDriver implements WhatsAppDriver {
       footer: options?.footerText,
       buttons: buttons.map((b) => ({ id: b.id, title: b.title })),
     })
-    return { messageId: result.id }
+    return { messageId: normalizeWahaId(result.id) }
   }
 
   async sendInteractiveList(
@@ -194,7 +212,7 @@ export class WahaDriver implements WhatsAppDriver {
         })),
       })),
     })
-    return { messageId: result.id }
+    return { messageId: normalizeWahaId(result.id) }
   }
 
   /**
