@@ -261,6 +261,7 @@ export function MessageThread({
           [
             Query.equal("conversation_id", conversationId),
             Query.orderAsc("created_at"),
+            Query.limit(200),
           ]
         );
         if (cancelled) return;
