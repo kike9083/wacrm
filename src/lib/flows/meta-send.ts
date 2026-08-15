@@ -123,6 +123,7 @@ export async function engineSendText(
         message_id: waMessageId,
         status: 'sent',
         ai_generated: args.aiGenerated ? true : null,
+        created_at: new Date().toISOString(),
       }
     )
   } catch (err) {

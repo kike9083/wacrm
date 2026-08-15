@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
-import { Query } from 'node-appwrite'
+import { ID, Query } from 'node-appwrite'
 import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
@@ -165,6 +165,25 @@ export async function dispatchInboundToAiReply(
         conversationId,
         update,
       )
+
+      // Post the handoff summary as an internal message so the assigned
+      // agent sees the context in the inbox thread without opening the
+      // conversation settings. sender_type 'bot' keeps it visually
+      // distinct from agent replies.
+      await databases
+        .createDocument(DATABASE_ID, COLLECTIONS.messages, ID.unique(), {
+          conversation_id: conversationId,
+          sender_type: 'bot',
+          content_type: 'text',
+          content_text: summary,
+          message_id: `handoff_${conversationId}_${Date.now()}`,
+          status: 'sent',
+          ai_generated: true,
+          created_at: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          console.warn('[ai auto-reply] handoff summary insert failed:', err)
+        })
       return
     }
 

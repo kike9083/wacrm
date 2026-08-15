@@ -278,6 +278,7 @@ export async function POST(request: Request) {
           message_id: waMessageId,
           status: 'sent',
           reply_to_message_id: reply_to_message_id || null,
+          created_at: new Date().toISOString(),
         }
       )
     } catch (err) {
