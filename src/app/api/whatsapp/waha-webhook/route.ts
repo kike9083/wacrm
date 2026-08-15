@@ -100,6 +100,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
   }
 
+  // WAHA (WEBJS) now delivers inbound contacts as Linked IDs (`@lid`)
+  // instead of the phone-number-based `@c.us`. The CRM pipeline keys
+  // contacts/conversations by phone number, so resolve the LID to the
+  // real number before adapting the payload. If resolution fails we
+  // keep the original value — the adapter will drop the message and
+  // log the reason.
+  const resolvedFrom = await resolveLidToPhone(config, session, payload.from)
+  if (resolvedFrom) payload.from = resolvedFrom
+
   // Dispatch — process asynchronously so WAHA gets its 200 ack fast.
   switch (event) {
     case 'message': {
@@ -142,6 +151,41 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ status: 'received' }, { status: 200 })
+}
+
+/**
+ * Resolve a WAHA Linked ID (`<number>@lid`) to the phone-number-based
+ * JID (`<number>@c.us`) the CRM keys on. Uses WAHA's LID→PN mapping
+ * endpoint. Returns null when the JID is already a phone number, the
+ * mapping is unknown, or the lookup fails — callers keep the original.
+ */
+async function resolveLidToPhone(
+  config: Record<string, unknown>,
+  session: string,
+  jid: unknown,
+): Promise<string | null> {
+  if (typeof jid !== 'string' || !jid.endsWith('@lid')) return null
+  if (typeof config.waha_base_url !== 'string' || typeof config.waha_api_key !== 'string') {
+    return null
+  }
+  const baseUrl = config.waha_base_url.replace(/\/+$/, '')
+  let apiKey: string
+  try {
+    apiKey = decrypt(config.waha_api_key)
+  } catch {
+    return null
+  }
+  try {
+    const res = await fetch(
+      `${baseUrl}/api/${encodeURIComponent(session)}/lids/${encodeURIComponent(jid)}`,
+      { headers: { 'X-Api-Key': apiKey } },
+    )
+    if (!res.ok) return null
+    const data = (await res.json()) as { pn?: string | null }
+    return typeof data.pn === 'string' && data.pn.endsWith('@c.us') ? data.pn : null
+  } catch {
+    return null
+  }
 }
 
 /**
