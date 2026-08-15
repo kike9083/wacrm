@@ -144,10 +144,13 @@ export async function POST(request: Request) {
       )
     }
 
-    const accessToken = decrypt(config.access_token)
+    // Decrypt access_token only when present — WAHA configs carry no
+    // Meta token, so decrypt(null) would crash before the driver even
+    // runs. The self-heal upgrade below is also Meta-only.
+    const accessToken = config.access_token ? decrypt(config.access_token) : ''
 
     // Self-heal legacy CBC-encrypted tokens. Fire-and-forget.
-    if (isLegacyFormat(config.access_token)) {
+    if (accessToken && isLegacyFormat(config.access_token)) {
       void databases.updateDocument(
         DATABASE_ID,
         COLLECTIONS.whatsappConfig,
