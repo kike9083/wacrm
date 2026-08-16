@@ -37,6 +37,13 @@ function stripChatSuffix(chatId: string | undefined): string {
   return chatId.replace(/@.*$/, '')
 }
 
+/** Map a WAHA media mimetype to the pipeline's message type. */
+function mimeToMessageType(mimetype: string): string {
+  const prefix = mimetype.split('/')[0]?.toLowerCase()
+  if (prefix === 'image' || prefix === 'video' || prefix === 'audio') return prefix
+  return 'document'
+}
+
 function timestampSeconds(payload: Record<string, unknown>): string {
   const ts = payload.timestamp
   if (typeof ts === 'number' || typeof ts === 'string') {
@@ -56,12 +63,33 @@ export function wahaMessageToMeta(
 ): WhatsAppMessage | null {
   const from = typeof payload.from === 'string' ? payload.from : ''
   const id = typeof payload.id === 'string' ? payload.id : ''
-  const type = typeof payload.type === 'string' ? payload.type : 'text'
 
   // 1:1 CRM — group chats (e.g. -1234@g.us) are not supported.
   if (!from.endsWith('@c.us') && !from.endsWith('@s.whatsapp.net')) {
     return null
   }
+
+  const media = payload.media as
+    | { url?: string; mimetype?: string; filename?: string; caption?: string }
+    | undefined
+
+  // WAHA omits `type` on media messages (image/audio/video/document) —
+  // the payload only carries `hasMedia` + `media.mimetype`. Derive the
+  // message type from the MIME prefix so the pipeline can render it.
+  const rawType = typeof payload.type === 'string' ? payload.type : ''
+  const type =
+    rawType ||
+    (payload.hasMedia === true && typeof media?.mimetype === 'string'
+      ? mimeToMessageType(media.mimetype)
+      : 'text')
+
+  // Media download id: WAHA serves files at /api/files/{session}/{filename}
+  // where filename = `{messageId}.{ext}` — take it from the media URL so
+  // the driver keeps the extension. Falls back to the message id.
+  const mediaId =
+    typeof media?.url === 'string'
+      ? (media.url.split('/').pop() ?? id)
+      : id
 
   const base: WhatsAppMessage = {
     id,
@@ -85,34 +113,31 @@ export function wahaMessageToMeta(
     return base
   }
 
-  const media = payload.media as
-    | { url?: string; mimetype?: string; filename?: string; caption?: string }
-    | undefined
-  const caption = media?.caption || (typeof payload.body === 'string' ? payload.body : undefined)
+  const caption = media?.caption || (typeof payload.body === 'string' && payload.body ? payload.body : undefined)
 
   switch (type) {
     case 'image':
-      base.image = { id, mime_type: media?.mimetype || 'image/jpeg', ...(caption ? { caption } : {}) }
+      base.image = { id: mediaId, mime_type: media?.mimetype || 'image/jpeg', ...(caption ? { caption } : {}) }
       return base
     case 'video':
-      base.video = { id, mime_type: media?.mimetype || 'video/mp4', ...(caption ? { caption } : {}) }
+      base.video = { id: mediaId, mime_type: media?.mimetype || 'video/mp4', ...(caption ? { caption } : {}) }
       return base
     case 'document':
       base.document = {
-        id,
+        id: mediaId,
         mime_type: media?.mimetype || 'application/octet-stream',
         ...(media?.filename ? { filename: media.filename } : {}),
         ...(caption ? { caption } : {}),
       }
       return base
     case 'audio':
-      base.audio = { id, mime_type: media?.mimetype || 'audio/ogg' }
+      base.audio = { id: mediaId, mime_type: media?.mimetype || 'audio/ogg' }
       return base
     case 'ptt':
       // Voice notes arrive from WAHA WEBJS as `ptt` (push-to-talk), not
       // `audio`. Normalize to audio so the pipeline renders the player.
       base.type = 'audio'
-      base.audio = { id, mime_type: media?.mimetype || 'audio/ogg' }
+      base.audio = { id: mediaId, mime_type: media?.mimetype || 'audio/ogg' }
       return base
     case 'sticker':
       base.sticker = { id, mime_type: media?.mimetype || 'image/webp' }

@@ -231,17 +231,20 @@ export class WahaApi {
   }
 
   /**
-   * Absolute URL of a message's media file. `mediaId` is the WAHA
-   * message id (the same id exposed as `payload.id` on webhook
-   * `message` events with `hasMedia: true`).
+   * Absolute URL of a message's media file. `mediaId` is the media
+   * filename WAHA stores (`{messageId}.{ext}`), taken from the webhook
+   * payload's `media.url`. WAHA serves stored files at
+   * `/api/files/{session}/{filename}` — the
+   * `/api/{session}/messages/{id}/media` endpoint does not exist in
+   * current WAHA versions.
    *
    * The endpoint requires the `X-Api-Key` header to download —
    * `downloadMedia` adds it automatically.
    */
   mediaUrl(session: string, mediaId: string): string {
-    return `${this.baseUrl}/api/${encodeURIComponent(
+    return `${this.baseUrl}/api/files/${encodeURIComponent(
       session,
-    )}/messages/${encodeURIComponent(mediaId)}/media`
+    )}/${encodeURIComponent(mediaId)}`
   }
 
   /** Download a media file (binary) from a WAHA media URL. */
