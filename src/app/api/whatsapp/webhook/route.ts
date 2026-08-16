@@ -4,6 +4,10 @@ import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { createDriverFromConfig } from '@/lib/whatsapp/driver'
+import {
+  persistMediaToAppwrite,
+  sanitizeMediaFilename,
+} from '@/lib/whatsapp/media-store'
 import type { WhatsAppConfigRow } from '@/lib/whatsapp/driver'
 import type { WhatsAppDriver } from '@/lib/whatsapp/types'
 import { normalizePhone, phonesMatch } from '@/lib/whatsapp/phone-utils'
@@ -794,7 +798,21 @@ async function parseMessageContent(
     mediaId: string
   ): Promise<string | null> => {
     try {
-      await driver.getMediaUrl(mediaId)
+      const mediaInfo = await driver.getMediaUrl(mediaId)
+      const { buffer } = await driver.downloadMedia(mediaInfo.url)
+
+      // Persist a durable copy in Appwrite Storage so the media keeps
+      // working after the provider's temporary storage expires. The
+      // proxy URL then points at the Appwrite file id.
+      const fileId = await persistMediaToAppwrite(
+        buffer,
+        sanitizeMediaFilename(mediaId),
+      )
+      if (fileId) {
+        return `/api/whatsapp/media/${fileId}`
+      }
+
+      // Fallback: serve live from the provider (legacy behavior).
       return `/api/whatsapp/media/${mediaId}`
     } catch (error) {
       console.error(

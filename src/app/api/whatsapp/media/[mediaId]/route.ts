@@ -3,6 +3,7 @@ import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { Query } from 'node-appwrite'
 import { createDriverFromConfig } from '@/lib/whatsapp/driver'
+import { fetchMediaFromAppwrite } from '@/lib/whatsapp/media-store'
 
 export async function GET(
   request: Request,
@@ -29,7 +30,21 @@ export async function GET(
       )
     }
 
-    // Fetch and decrypt WhatsApp config for Meta
+    // Durable copy first — the webhook persists every inbound media file
+    // into Appwrite Storage, so most requests never touch the provider.
+    const persisted = await fetchMediaFromAppwrite(mediaId)
+    if (persisted) {
+      return new Response(new Uint8Array(persisted.buffer), {
+        status: 200,
+        headers: {
+          'Content-Type': persisted.contentType,
+          'Cache-Control': 'public, max-age=86400',
+        },
+      })
+    }
+
+    // Legacy fallback: messages persisted before Appwrite storage existed
+    // (or failed uploads) carry the provider media id — fetch it live.
     const { databases } = createAdminClient()
     let configs
     try {
@@ -53,7 +68,6 @@ export async function GET(
     }
     const driver = createDriverFromConfig(config)
 
-    // Get the download URL and download the binary data
     const mediaInfo = await driver.getMediaUrl(mediaId)
     const { buffer, contentType } = await driver.downloadMedia(mediaInfo.url)
 
