@@ -87,11 +87,12 @@ export async function insertSteps(
   const { databases } = createAdminClient()
   try {
     for (const row of rows) {
+      const { id, ...data } = row
       await databases.createDocument(
         DATABASE_ID,
         COLLECTIONS.automationSteps,
-        row.id,
-        row
+        id,
+        data
       )
     }
     return null
@@ -141,7 +142,10 @@ export async function loadStepsTree(automationId: string): Promise<BuilderStepNo
     COLLECTIONS.automationSteps,
     [Query.equal('automation_id', automationId), Query.orderAsc('position')]
   )
-  const rows = documents as unknown as DbStep[]
+  const rows = (documents as unknown as Array<DbStep & { $id: string }>).map((d) => ({
+    ...d,
+    id: d.$id,
+  }))
 
   const byId = new Map<string, BuilderStepNode>()
   for (const row of rows) {

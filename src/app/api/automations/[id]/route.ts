@@ -45,6 +45,7 @@ export async function GET(
   return NextResponse.json({
     automation: {
       ...automation,
+      id: automation.$id,
       trigger_config: parseConfig(automation.trigger_config, {}),
     },
     steps,

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { Query } from 'node-appwrite'
+import { parseConfig } from '@/lib/appwrite/json-attr'
 
 export async function GET(
   _request: Request,
@@ -38,7 +39,11 @@ export async function GET(
       Query.limit(50),
     ]
   )
-  const runs = runsResult.documents
+  const runs = runsResult.documents.map((r) => ({
+    ...r,
+    id: r.$id,
+    vars: parseConfig(r.vars, {}),
+  }))
 
   const runIds = runs.map((r) => r.$id)
   let events: Array<{
@@ -58,7 +63,10 @@ export async function GET(
           Query.orderAsc('created_at'),
         ]
       )
-      events = evsResult.documents as unknown as typeof events
+      events = (evsResult.documents as unknown as typeof events).map((e) => ({
+        ...e,
+        payload: parseConfig(e.payload, {}),
+      }))
     } catch (err) {
       console.error('[flows-runs] events fetch failed:', err instanceof Error ? err.message : err)
     }

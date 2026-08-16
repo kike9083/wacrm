@@ -5,6 +5,8 @@ import { ID, Query } from 'node-appwrite'
 import { getTemplate } from '@/lib/automations/templates'
 import { insertSteps, type BuilderStepInput } from '@/lib/automations/steps-tree'
 import { stringifyConfig } from '@/lib/appwrite/json-attr'
+import { mapDocId } from '@/lib/appwrite/row-mappers'
+import type { Automation } from '@/types'
 import {
   validateStepsForActivation,
   validateTriggerForActivation,
@@ -25,7 +27,9 @@ export async function GET() {
     COLLECTIONS.automations,
     [Query.equal('user_id', user.$id), Query.orderDesc('created_at')]
   )
-  return NextResponse.json({ automations: documents })
+  return NextResponse.json({
+    automations: documents.map((d) => mapDocId<Automation>(d)),
+  })
 }
 
 export async function POST(request: Request) {
@@ -107,5 +111,5 @@ export async function POST(request: Request) {
     if (err) return NextResponse.json({ error: err }, { status: 500 })
   }
 
-  return NextResponse.json({ automation }, { status: 201 })
+  return NextResponse.json({ automation: mapDocId<Automation>(automation) }, { status: 201 })
 }

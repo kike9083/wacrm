@@ -4,6 +4,9 @@ import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
 import { getFlowTemplate } from '@/lib/flows/templates'
 import { stringifyConfig } from '@/lib/appwrite/json-attr'
+import { parseConfig } from '@/lib/appwrite/json-attr'
+import { mapDocId } from '@/lib/appwrite/row-mappers'
+import type { FlowRow } from '@/lib/flows/types'
 
 async function requireUserId(): Promise<string | null> {
   const { account } = await createSessionClient()
@@ -27,7 +30,11 @@ export async function GET() {
     COLLECTIONS.flows,
     [Query.equal('user_id', userId), Query.orderDesc('created_at')]
   )
-  return NextResponse.json({ flows: documents })
+  return NextResponse.json({
+    flows: documents.map((d) =>
+      mapDocId<FlowRow>({ ...d, trigger_config: parseConfig(d.trigger_config, {}) }),
+    ),
+  })
 }
 
 export async function POST(request: Request) {
@@ -100,7 +107,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: message }, { status: 500 })
       }
     }
-    return NextResponse.json({ flow }, { status: 201 })
+    return NextResponse.json({ flow: mapDocId<FlowRow>(flow) }, { status: 201 })
   }
 
   if (!body.name?.trim()) {
@@ -122,7 +129,7 @@ export async function POST(request: Request) {
         trigger_config: stringifyConfig(body.trigger_config),
       }
     )
-    return NextResponse.json({ flow }, { status: 201 })
+    return NextResponse.json({ flow: mapDocId<FlowRow>(flow) }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'insert failed'
     return NextResponse.json({ error: message }, { status: 500 })

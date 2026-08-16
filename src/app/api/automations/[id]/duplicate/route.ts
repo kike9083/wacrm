@@ -77,7 +77,6 @@ export async function POST(
         COLLECTIONS.automationSteps,
         newId,
         {
-          id: newId,
           automation_id: copy.$id,
           parent_step_id: row.parent_step_id ? idMap.get(row.parent_step_id as string) : null,
           branch: row.branch,
@@ -89,5 +88,5 @@ export async function POST(
     }
   }
 
-  return NextResponse.json({ automation: copy }, { status: 201 })
+  return NextResponse.json({ automation: { ...copy, id: copy.$id } }, { status: 201 })
 }

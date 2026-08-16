@@ -189,6 +189,7 @@ async function loadActiveRunForContact(
     return (result.documents[0]
       ? {
           ...(result.documents[0] as unknown as FlowRunRow),
+          id: result.documents[0].$id,
           vars: parseConfig(result.documents[0].vars, {}) as FlowRunRow["vars"],
           reprompt_count: (result.documents[0] as any).reprompt_count ?? 0,
         }
@@ -207,6 +208,7 @@ async function loadFlow(
     const flow = await databases.getDocument(DATABASE_ID, COLLECTIONS.flows, flowId);
     return {
       ...(flow as unknown as FlowRow),
+      id: flow.$id,
       trigger_config: parseConfig(flow.trigger_config, {}),
     };
   } catch (err) {
@@ -226,9 +228,10 @@ async function loadAllNodes(
       [Query.equal("flow_id", flowId)]
     );
     const map = new Map<string, FlowNodeRow>();
-    for (const row of result.documents as unknown as FlowNodeRow[]) {
+    for (const row of result.documents as unknown as Array<FlowNodeRow & { $id: string }>) {
       map.set(row.node_key, {
         ...row,
+        id: row.$id,
         config: parseConfig(row.config, {}),
       });
     }
@@ -322,8 +325,9 @@ async function findEntryFlow(
         Query.orderAsc("created_at"),
       ]
     );
-    const flows = (result.documents as unknown as FlowRow[]).map((f) => ({
+    const flows = (result.documents as unknown as Array<FlowRow & { $id: string }>).map((f) => ({
       ...f,
+      id: f.$id,
       trigger_config: parseConfig(f.trigger_config, {}),
     }));
     for (const flow of flows) {
@@ -982,7 +986,7 @@ async function startNewRun(
         current_node_key: flow.entry_node_id,
       }
     );
-    run = inserted as unknown as FlowRunRow;
+    run = { ...(inserted as unknown as FlowRunRow), id: inserted.$id };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg.includes("unique") || msg.includes("duplicate")) {

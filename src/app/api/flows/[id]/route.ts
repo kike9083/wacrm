@@ -47,11 +47,13 @@ export async function GET(
   ])
   const parsedFlow = {
     ...flow,
+    id: flow.$id,
     trigger_config: parseConfig(flow.trigger_config, {}),
     fallback_policy: parseConfig(flow.fallback_policy, {}),
   }
   const parsedNodes = (nodesResult.documents ?? []).map((n: any) => ({
     ...n,
+    id: n.$id,
     config: parseConfig(n.config, {}),
   }))
   return NextResponse.json({ flow: parsedFlow, nodes: parsedNodes })
@@ -162,11 +164,13 @@ export async function PUT(
   return NextResponse.json({
     flow: {
       ...flow,
+      id: flow.$id,
       trigger_config: parseConfig(flow.trigger_config, {}),
       fallback_policy: parseConfig(flow.fallback_policy, {}),
     },
     nodes: (nodesResult.documents ?? []).map((n: any) => ({
       ...n,
+      id: n.$id,
       config: parseConfig(n.config, {}),
     })),
   })

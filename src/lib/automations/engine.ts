@@ -19,6 +19,7 @@ import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
 import { engineSendText, engineSendTemplate } from './meta-send'
 import { parseConfig, stringifyConfig } from '@/lib/appwrite/json-attr'
+import { mapDocId } from '@/lib/appwrite/row-mappers'
 
 // ------------------------------------------------------------
 // Public API
@@ -63,7 +64,7 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
         Query.equal('is_active', true),
       ]
     )
-    const automations = result.documents as unknown as Automation[]
+    const automations = result.documents.map((d) => mapDocId<Automation>(d))
 
     if (!automations || automations.length === 0) return
 
@@ -99,6 +100,7 @@ export async function resumePendingExecution(pending: {
   let automation
   try {
     automation = await databases.getDocument(DATABASE_ID, COLLECTIONS.automations, pending.automation_id)
+    automation = mapDocId<Automation>(automation as unknown as Record<string, unknown>)
   } catch (err) {
     console.error('[automations] resume: missing automation', pending.automation_id, err)
     await markPending(pending.id, 'failed')
@@ -211,7 +213,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
   let status: 'success' | 'partial' | 'failed' = 'success'
   let errorMessage: string | null = null
 
-  for (const step of steps as unknown as AutomationStep[]) {
+  for (const step of steps.map((s) => mapDocId<AutomationStep>(s))) {
     const parsedStep = {
       ...step,
       step_config: parseConfig(step.step_config, {}),
