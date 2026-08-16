@@ -6,7 +6,7 @@ import { databases, account } from '@/lib/appwrite/client';
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db';
 import { Query } from 'appwrite';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal } from '@/types';
+import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, Message } from '@/types';
 import {
   Sheet,
   SheetContent,
@@ -34,6 +34,12 @@ import {
   Save,
   X,
   DollarSign,
+  FileText,
+  Image as ImageIcon,
+  Mic,
+  Video,
+  Download,
+  ExternalLink,
 } from 'lucide-react';
 
 interface ContactDetailViewProps {
@@ -81,6 +87,10 @@ export function ContactDetailView({
   // Deals tab
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loadingDeals, setLoadingDeals] = useState(false);
+
+  // Media tab
+  const [mediaFiles, setMediaFiles] = useState<Message[]>([]);
+  const [loadingMedia, setLoadingMedia] = useState(false);
 
   const fetchContact = useCallback(async () => {
     if (!contactId) return;
@@ -177,6 +187,46 @@ export function ContactDetailView({
     setLoadingDeals(false);
   }, [contactId]);
 
+  const fetchMedia = useCallback(async () => {
+    if (!contactId) return;
+    setLoadingMedia(true);
+    try {
+      const user = await account.get();
+      const convs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.conversations,
+        [
+          Query.equal('user_id', user.$id),
+          Query.equal('contact_id', contactId),
+          Query.limit(100),
+        ]
+      );
+      const convIds = convs.documents.map((c) => c.$id);
+      if (convIds.length === 0) {
+        setMediaFiles([]);
+        setLoadingMedia(false);
+        return;
+      }
+      const msgs = await databases.listDocuments(
+        DATABASE_ID,
+        COLLECTIONS.messages,
+        [
+          Query.equal('conversation_id', convIds),
+          Query.equal('sender_type', 'customer'),
+          Query.equal('content_type', ['image', 'document', 'audio', 'video']),
+          Query.orderDesc('created_at'),
+          Query.limit(30),
+        ]
+      );
+      setMediaFiles(
+        (msgs.documents as unknown as Message[]).filter((m) => Boolean(m.media_url))
+      );
+    } catch {
+      setMediaFiles([]);
+    }
+    setLoadingMedia(false);
+  }, [contactId]);
+
   useEffect(() => {
     if (open && contactId) {
       fetchContact();
@@ -184,8 +234,9 @@ export function ContactDetailView({
       fetchNotes();
       fetchCustomFields();
       fetchDeals();
+      fetchMedia();
     }
-  }, [open, contactId, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals]);
+  }, [open, contactId, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals, fetchMedia]);
 
   async function copyPhone() {
     if (!contact) return;
@@ -425,6 +476,12 @@ export function ContactDetailView({
                   {t('contacts.notes')}
                 </TabsTrigger>
                 <TabsTrigger
+                  value="media"
+                  className="data-active:bg-slate-800 data-active:text-primary text-slate-400"
+                >
+                  {t('contacts.docsImages')}
+                </TabsTrigger>
+                <TabsTrigger
                   value="custom"
                   className="data-active:bg-slate-800 data-active:text-primary text-slate-400"
                 >
@@ -595,6 +652,26 @@ export function ContactDetailView({
                 </div>
               </TabsContent>
 
+              {/* Media Tab */}
+              <TabsContent value="media" className="flex-1 overflow-y-auto px-4 py-3">
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-400">
+                    {t('contacts.docsImages')}
+                  </p>
+                  {loadingMedia ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="size-5 animate-spin text-slate-500" />
+                    </div>
+                  ) : mediaFiles.length === 0 ? (
+                    <p className="text-sm text-slate-500 text-center py-8">
+                      {t('contacts.noDocsImages')}
+                    </p>
+                  ) : (
+                    mediaFiles.map((m) => <MediaRow key={m.id} media={m} />)
+                  )}
+                </div>
+              </TabsContent>
+
               {/* Custom Fields Tab */}
               <TabsContent value="custom" className="flex-1 overflow-y-auto px-4 py-3">
                 {loadingCustom ? (
@@ -704,5 +781,117 @@ export function ContactDetailView({
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+const MEDIA_LABELS: Record<string, string> = {
+  image: 'Imagen',
+  document: 'Documento',
+  audio: 'Audio',
+  video: 'Video',
+};
+
+function MediaThumb({ url, type }: { url: string; type: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (type !== 'image' || !url) return;
+    let cancelled = false;
+    fetch(url)
+      .then((res) => (res.ok ? res.blob() : null))
+      .then((blob) => {
+        if (!blob || cancelled) return;
+        setSrc(URL.createObjectURL(blob));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [url, type]);
+
+  if (type !== 'image') return null;
+
+  return src ? (
+    <img
+      src={src}
+      alt=""
+      className="h-12 w-12 shrink-0 rounded-md object-cover border border-slate-700"
+    />
+  ) : (
+    <div className="h-12 w-12 shrink-0 rounded-md bg-slate-800 flex items-center justify-center">
+      <ImageIcon className="size-5 text-slate-500" />
+    </div>
+  );
+}
+
+function MediaRow({ media }: { media: Message }) {
+  const { t } = useTranslation();
+  const Icon =
+    media.content_type === 'image'
+      ? ImageIcon
+      : media.content_type === 'audio'
+        ? Mic
+        : media.content_type === 'video'
+          ? Video
+          : FileText;
+  const label = MEDIA_LABELS[media.content_type] ?? media.content_type;
+  const name = media.content_text?.trim() || label;
+
+  const handleDownload = async () => {
+    if (!media.media_url) return;
+    try {
+      const res = await fetch(media.media_url);
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      // Non-critical — open in new tab still works.
+    }
+  };
+
+  return (
+    <div className="rounded-lg bg-slate-800/50 border border-slate-700/50 p-2.5 flex items-center gap-3">
+      <MediaThumb url={media.media_url ?? ''} type={media.content_type} />
+      {media.content_type !== 'image' && (
+        <div className="h-12 w-12 shrink-0 rounded-md bg-slate-800 flex items-center justify-center">
+          <Icon className="size-5 text-slate-400" />
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-slate-300 truncate">{name}</p>
+        <p className="text-xs text-slate-500">
+          {new Date(media.created_at).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+        </p>
+      </div>
+      <div className="flex items-center gap-0.5 shrink-0">
+        <a
+          href={media.media_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="p-1.5 text-slate-400 hover:text-white transition-colors"
+          title={t('contacts.openMedia')}
+        >
+          <ExternalLink className="size-3.5" />
+        </a>
+        <button
+          onClick={handleDownload}
+          className="p-1.5 text-slate-400 hover:text-white transition-colors cursor-pointer"
+          title={t('common.download')}
+        >
+          <Download className="size-3.5" />
+        </button>
+      </div>
+    </div>
   );
 }
