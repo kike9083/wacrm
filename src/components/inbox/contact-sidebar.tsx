@@ -150,7 +150,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
         {
           contact_id: contact.id,
           user_id: currentUser.$id,
-          note_text: newNote.trim(),
+          content: newNote.trim(),
         }
       );
       setNotes((prev) => [
@@ -331,7 +331,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                     className="rounded-lg bg-slate-800 px-3 py-2"
                   >
                     <p className="whitespace-pre-wrap text-xs text-slate-300">
-                      {note.note_text}
+                      {(note as any).content || note.note_text}
                     </p>
                     <p className="mt-1 text-[10px] text-slate-600">
                       {(note as any).author_name && (

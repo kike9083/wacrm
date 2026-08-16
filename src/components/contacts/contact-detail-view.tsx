@@ -271,7 +271,7 @@ export function ContactDetailView({
       await databases.createDocument(DATABASE_ID, COLLECTIONS.contactNotes, 'unique()', {
         contact_id: contactId,
         user_id: user.$id,
-        note_text: newNote.trim(),
+        content: newNote.trim(),
       });
       setNewNote('');
       fetchNotes();

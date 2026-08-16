@@ -184,6 +184,37 @@ export async function dispatchInboundToAiReply(
         .catch((err: unknown) => {
           console.warn('[ai auto-reply] handoff summary insert failed:', err)
         })
+
+      // Ping the agent on WhatsApp with the summary so they know a
+      // customer is waiting for a human.
+      if (config.handoffAgentId) {
+        try {
+          const profiles = await databases.listDocuments(
+            DATABASE_ID,
+            COLLECTIONS.profiles,
+            [Query.equal('user_id', config.handoffAgentId), Query.limit(1)],
+          )
+          const agentPhone = profiles.documents[0]?.whatsapp_number
+          if (agentPhone) {
+            const { createDriverFromConfig } = await import('@/lib/whatsapp/driver')
+            const waConfigs = await databases.listDocuments(
+              DATABASE_ID,
+              COLLECTIONS.whatsappConfig,
+              [Query.equal('user_id', userId), Query.limit(1)],
+            )
+            const waConfig = waConfigs.documents[0]
+            if (waConfig) {
+              const driver = createDriverFromConfig(waConfig)
+              await driver.sendText(
+                agentPhone,
+                `🔔 Handoff — el cliente pidió hablar con un asesor\n\n${summary}`,
+              )
+            }
+          }
+        } catch (err) {
+          console.warn('[ai auto-reply] handoff WhatsApp notification failed:', err)
+        }
+      }
       return
     }
 
@@ -234,7 +265,7 @@ export async function dispatchInboundToAiReply(
           contact_id: contactId,
           user_id: userId,
           author_name: 'IA',
-          note_text: `📌 Seguimiento pendiente — el cliente preguntó: "${lastUserMsg}". La IA respondió de forma general porque no tiene ese dato específico.`,
+          content: `📌 Seguimiento pendiente — el cliente preguntó: "${lastUserMsg}". La IA respondió de forma general porque no tiene ese dato específico.`,
         })
         .catch((err: unknown) => {
           console.warn('[ai auto-reply] followup note insert failed:', err)

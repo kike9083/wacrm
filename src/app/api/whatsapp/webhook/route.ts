@@ -605,6 +605,25 @@ async function processMessage(
       ? 'image'   // stickers are images
       : 'text'    // reaction, unknown → text fallback
 
+  // Dedupe: WAHA WEBJS can fire the same `message` event twice for a
+  // single inbound. If we already persisted this message_id, skip the
+  // whole pipeline (no double insert, no double auto-reply).
+  try {
+    const existing = await adminDb().listDocuments(
+      DATABASE_ID,
+      COLLECTIONS.messages,
+      [
+        Query.equal('message_id', message.id),
+        Query.equal('conversation_id', conversation.$id),
+        Query.limit(1),
+      ]
+    )
+    if (existing.documents.length > 0) return
+  } catch {
+    // If the dedupe check fails, proceed — a rare duplicate is better
+    // than silently dropping a real message.
+  }
+
   // Determine whether this is the contact's very first inbound message
   let priorCustomerMsgCount = 0
   try {
