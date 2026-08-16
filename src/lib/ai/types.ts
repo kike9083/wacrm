@@ -60,6 +60,9 @@ export interface GenerateResult {
   text: string
   /** True when the model asked to hand off to a human (auto-reply mode). */
   handoff: boolean
+  /** True when the model replied generically but flagged a human follow-up
+   *  for specifics (price, coverage, availability). */
+  followup: boolean
   /** Provider token usage for this call, or null when unavailable. */
   usage: AiUsage | null
 }

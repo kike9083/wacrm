@@ -23,6 +23,10 @@ export const AI_PROVIDER_DEFAULT_MODEL: Record<AiProvider, string> = {
  */
 export const HANDOFF_SENTINEL = '[[HANDOFF]]'
 
+/** Sentinel the model emits when it replies generically but a human
+ *  should follow up with specifics (price, coverage, availability). */
+export const FOLLOWUP_SENTINEL = '[[FOLLOWUP]]'
+
 /** Cap on generated reply length — keeps WhatsApp replies short and
  *  bounds token spend on the caller's own key. */
 export const MAX_OUTPUT_TOKENS = 1024
@@ -69,7 +73,7 @@ export function buildSystemPrompt(args: {
 
   if (mode === 'auto_reply') {
     parts.push(
-      `You are replying automatically with no human in the loop. Reply helpfully to every customer message — do NOT hand off just because you are unsure about a detail; give a general answer and offer to follow up with specifics. Only reply with exactly ${HANDOFF_SENTINEL} (and nothing else) when the customer explicitly asks to speak with a human, demands a manager, or is clearly upset and wants to escalate. In every other case, write a helpful reply.`,
+      `You are replying automatically with no human in the loop. Reply helpfully to every customer message — do NOT hand off just because you are unsure about a detail; give a general answer and offer to follow up with specifics. Only reply with exactly ${HANDOFF_SENTINEL} (and nothing else) when the customer explicitly asks to speak with a human, demands a manager, or is clearly upset and wants to escalate. In every other case, write a helpful reply. When the customer asks for a specific fact you do not have (an exact price, a coverage detail, availability) and you answer generically, append ${FOLLOWUP_SENTINEL} at the very end of your reply so a human agent knows to follow up with the specifics.`,
     )
   }
 

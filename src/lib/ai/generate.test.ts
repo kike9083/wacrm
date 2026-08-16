@@ -43,6 +43,7 @@ describe('parseGeneration', () => {
     expect(parseGeneration('Hello there')).toEqual({
       text: 'Hello there',
       handoff: false,
+      followup: false,
       usage: null,
     })
   })
@@ -51,11 +52,13 @@ describe('parseGeneration', () => {
     expect(parseGeneration('[[HANDOFF]]')).toEqual({
       text: '',
       handoff: true,
+      followup: false,
       usage: null,
     })
     expect(parseGeneration('Let me get a human [[HANDOFF]]')).toEqual({
       text: 'Let me get a human',
       handoff: true,
+      followup: false,
       usage: null,
     })
   })
@@ -65,6 +68,7 @@ describe('parseGeneration', () => {
     expect(parseGeneration('Hi', usage)).toEqual({
       text: 'Hi',
       handoff: false,
+      followup: false,
       usage,
     })
   })
@@ -89,6 +93,7 @@ describe('generateReply — OpenAI', () => {
     expect(res).toEqual({
       text: 'Sure — happy to help!',
       handoff: false,
+      followup: false,
       usage: { promptTokens: 42, completionTokens: 8, totalTokens: 50 },
     })
     const [url, opts] = fetchMock.mock.calls[0]
@@ -148,6 +153,7 @@ describe('generateReply — Anthropic', () => {
     expect(res).toEqual({
       text: 'Hi there!',
       handoff: false,
+      followup: false,
       usage: { promptTokens: 30, completionTokens: 6, totalTokens: 36 },
     })
     const [url, opts] = fetchMock.mock.calls[0]
@@ -212,6 +218,7 @@ describe('generateReply — OpenRouter', () => {
     expect(res).toEqual({
       text: 'Routing works',
       handoff: false,
+      followup: false,
       usage: { promptTokens: 10, completionTokens: 3, totalTokens: 13 },
     })
     const [url, opts] = fetchMock.mock.calls[0]

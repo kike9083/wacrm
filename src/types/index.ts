@@ -63,6 +63,7 @@ export interface ContactNote {
   contact_id: string;
   user_id: string;
   note_text: string;
+  author_name?: string;
   created_at: string;
 }
 

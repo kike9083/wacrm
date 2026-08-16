@@ -119,7 +119,7 @@ export async function dispatchInboundToAiReply(
       knowledge,
     })
 
-    const { text, handoff, usage } = await generateReply({
+    const { text, handoff, followup, usage } = await generateReply({
       config,
       systemPrompt,
       messages,
@@ -213,6 +213,63 @@ export async function dispatchInboundToAiReply(
       text,
       aiGenerated: true,
     })
+
+    // Follow-up flag: the model answered generically because it lacks a
+    // specific fact (price, coverage, availability). The customer gets
+    // the generic reply (already sent above), the bot stays active, and
+    // we (a) drop an internal note on the contact so the team sees the
+    // pending follow-up, and (b) ping the configured agent on WhatsApp
+    // with a short conversation summary so they can jump in with the
+    // specifics.
+    if (followup) {
+      const lastUserMsg = latestUserMessage(messages)
+      const summary = buildHandoffSummary({
+        messages,
+        replyCount: conv.ai_reply_count ?? 0,
+      })
+
+      // Internal note on the contact (visible in the inbox sidebar).
+      await databases
+        .createDocument(DATABASE_ID, COLLECTIONS.contactNotes, ID.unique(), {
+          contact_id: contactId,
+          user_id: userId,
+          author_name: 'IA',
+          note_text: `📌 Seguimiento pendiente — el cliente preguntó: "${lastUserMsg}". La IA respondió de forma general porque no tiene ese dato específico.`,
+        })
+        .catch((err: unknown) => {
+          console.warn('[ai auto-reply] followup note insert failed:', err)
+        })
+
+      // WhatsApp ping to the configured agent with the summary.
+      if (config.handoffAgentId) {
+        try {
+          const profiles = await databases.listDocuments(
+            DATABASE_ID,
+            COLLECTIONS.profiles,
+            [Query.equal('user_id', config.handoffAgentId), Query.limit(1)],
+          )
+          const agentPhone = profiles.documents[0]?.whatsapp_number
+          if (agentPhone) {
+            const { createDriverFromConfig } = await import('@/lib/whatsapp/driver')
+            const waConfigs = await databases.listDocuments(
+              DATABASE_ID,
+              COLLECTIONS.whatsappConfig,
+              [Query.equal('user_id', userId), Query.limit(1)],
+            )
+            const waConfig = waConfigs.documents[0]
+            if (waConfig) {
+              const driver = createDriverFromConfig(waConfig)
+              await driver.sendText(
+                agentPhone,
+                `📌 Seguimiento pendiente\n\n${summary}`,
+              )
+            }
+          }
+        } catch (err) {
+          console.warn('[ai auto-reply] agent WhatsApp notification failed:', err)
+        }
+      }
+    }
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   }

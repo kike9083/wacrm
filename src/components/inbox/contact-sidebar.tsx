@@ -334,6 +334,11 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                       {note.note_text}
                     </p>
                     <p className="mt-1 text-[10px] text-slate-600">
+                      {(note as any).author_name && (
+                        <span className="text-slate-500">
+                          {(note as any).author_name} ·{" "}
+                        </span>
+                      )}
                       {format(new Date(note.created_at), "MMM d, yyyy HH:mm")}
                     </p>
                   </div>
