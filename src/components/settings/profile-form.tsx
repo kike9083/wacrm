@@ -45,6 +45,7 @@ export function ProfileForm() {
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [whatsappNumber, setWhatsappNumber] = useState('');
   const [pendingAvatar, setPendingAvatar] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [removeAvatar, setRemoveAvatar] = useState(false);
@@ -56,6 +57,7 @@ export function ProfileForm() {
     if (!profile) return;
     setFullName(profile.full_name ?? '');
     setEmail(profile.email ?? '');
+    setWhatsappNumber((profile as any).whatsapp_number ?? '');
   }, [profile]);
 
   // Cleanup object URLs to avoid leaks.
@@ -171,6 +173,7 @@ export function ProfileForm() {
         {
           full_name: trimmedName,
           avatar_url: nextAvatarUrl,
+          whatsapp_number: whatsappNumber.trim() || null,
         }
       );
 
@@ -217,6 +220,7 @@ export function ProfileForm() {
     !!profile &&
     (fullName.trim() !== (profile.full_name ?? '') ||
       email.trim().toLowerCase() !== (profile.email ?? '').toLowerCase() ||
+      whatsappNumber.trim() !== ((profile as any).whatsapp_number ?? '') ||
       pendingAvatar !== null ||
       removeAvatar);
 
@@ -322,6 +326,25 @@ export function ProfileForm() {
                 </span>
               </p>
             )}
+          </div>
+
+          {/* WhatsApp number — used by the AI follow-up notification */}
+          <div className="space-y-2">
+            <Label htmlFor="profile-whatsapp-number" className="text-slate-200">
+              {t('settings.profile.whatsappNumber')}
+            </Label>
+            <Input
+              id="profile-whatsapp-number"
+              type="tel"
+              value={whatsappNumber}
+              onChange={(e) => setWhatsappNumber(e.target.value)}
+              placeholder="50761142198"
+              maxLength={20}
+              disabled={saving}
+            />
+            <p className="text-xs text-slate-500">
+              {t('settings.profile.whatsappNumberHint')}
+            </p>
           </div>
 
           {/* Read-only block */}

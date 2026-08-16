@@ -768,7 +768,9 @@
       "unsupportedImageDesc": "Usá PNG, JPG, GIF o WebP.",
       "imageTooLarge": "Imagen muy grande",
       "imageTooLargeDesc": "El máximo es 2MB.",
-      "checkInbox": "Revisá {{currentEmail}} para confirmar el cambio a {{newEmail}}."
+      "checkInbox": "Revisá {{currentEmail}} para confirmar el cambio a {{newEmail}}.",
+      "whatsappNumber": "Número de WhatsApp",
+      "whatsappNumberHint": "Tu número personal para recibir notificaciones de la IA (solo dígitos, con código de país)."
     },
     "password": {
       "title": "Contraseña",

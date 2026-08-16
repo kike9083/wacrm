@@ -768,7 +768,9 @@
       "unsupportedImageDesc": "Use PNG, JPG, GIF or WebP.",
       "imageTooLarge": "Image too large",
       "imageTooLargeDesc": "Maximum size is 2MB.",
-      "checkInbox": "Check {{currentEmail}} to confirm the change to {{newEmail}}."
+      "checkInbox": "Check {{currentEmail}} to confirm the change to {{newEmail}}.",
+      "whatsappNumber": "WhatsApp number",
+      "whatsappNumberHint": "Your personal number to receive AI follow-up notifications (digits only, with country code)."
     },
     "password": {
       "title": "Password",
