@@ -4,6 +4,7 @@ import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
 import { getTemplate } from '@/lib/automations/templates'
 import { insertSteps, type BuilderStepInput } from '@/lib/automations/steps-tree'
+import { stringifyConfig } from '@/lib/appwrite/json-attr'
 import {
   validateStepsForActivation,
   validateTriggerForActivation,
@@ -92,7 +93,7 @@ export async function POST(request: Request) {
         name: effectiveName,
         description: effectiveDescription ?? null,
         trigger_type: effectiveTriggerType,
-        trigger_config: effectiveTriggerConfig ?? {},
+        trigger_config: stringifyConfig(effectiveTriggerConfig),
         is_active: !!is_active,
       }
     )

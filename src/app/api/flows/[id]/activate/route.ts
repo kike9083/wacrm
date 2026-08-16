@@ -3,6 +3,7 @@ import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { Query } from 'node-appwrite'
 import { validateFlowForActivation } from '@/lib/flows/validate'
+import { parseConfig } from '@/lib/appwrite/json-attr'
 
 export async function POST(
   request: Request,
@@ -51,13 +52,19 @@ export async function POST(
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
     const issues = validateFlowForActivation(
-      flow as unknown as {
+      {
+        ...(flow as object),
+        trigger_config: parseConfig(flow.trigger_config, {}),
+      } as unknown as {
         name: string
         trigger_type: 'keyword' | 'first_inbound_message' | 'manual'
         trigger_config: Record<string, unknown>
         entry_node_id: string | null
       },
-      (nodesResult.documents ?? []) as unknown as Array<{
+      (nodesResult.documents ?? []).map((n: any) => ({
+        ...n,
+        config: parseConfig(n.config, {}),
+      })) as unknown as Array<{
         node_key: string
         node_type: string
         config: Record<string, unknown>

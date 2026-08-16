@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { Query } from 'node-appwrite'
+import { parseConfig, stringifyConfig } from '@/lib/appwrite/json-attr'
 
 export interface BuilderStepInput {
   id?: string
@@ -17,7 +18,7 @@ interface InsertRow {
   parent_step_id: string | null
   branch: 'yes' | 'no' | null
   step_type: string
-  step_config: Record<string, unknown>
+  step_config: string
   position: number
 }
 
@@ -71,7 +72,7 @@ export async function insertSteps(
         parent_step_id: parentId,
         branch,
         step_type: s.step_type,
-        step_config: s.step_config ?? {},
+        step_config: stringifyConfig(s.step_config ?? {}),
         position: idx,
       })
       if (s.step_type === 'condition' && s.branches) {
@@ -147,7 +148,7 @@ export async function loadStepsTree(automationId: string): Promise<BuilderStepNo
     byId.set(row.id, {
       id: row.id,
       step_type: row.step_type,
-      step_config: row.step_config ?? {},
+      step_config: parseConfig(row.step_config, {}),
       branches: { yes: [], no: [] },
     })
   }

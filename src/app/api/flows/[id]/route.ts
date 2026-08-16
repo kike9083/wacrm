@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
+import { parseConfig, stringifyConfig } from '@/lib/appwrite/json-attr'
 
 async function requireOwnership(
   flowId: string,
@@ -44,7 +45,16 @@ export async function GET(
       Query.orderAsc('created_at'),
     ]),
   ])
-  return NextResponse.json({ flow, nodes: nodesResult.documents ?? [] })
+  const parsedFlow = {
+    ...flow,
+    trigger_config: parseConfig(flow.trigger_config, {}),
+    fallback_policy: parseConfig(flow.fallback_policy, {}),
+  }
+  const parsedNodes = (nodesResult.documents ?? []).map((n: any) => ({
+    ...n,
+    config: parseConfig(n.config, {}),
+  }))
+  return NextResponse.json({ flow: parsedFlow, nodes: parsedNodes })
 }
 
 interface PutBody {
@@ -92,11 +102,11 @@ export async function PUT(
     flowPatch.description = body.description
   if (body.trigger_type !== undefined) flowPatch.trigger_type = body.trigger_type
   if (body.trigger_config !== undefined)
-    flowPatch.trigger_config = body.trigger_config
+    flowPatch.trigger_config = stringifyConfig(body.trigger_config)
   if (body.entry_node_id !== undefined)
     flowPatch.entry_node_id = body.entry_node_id
   if (body.fallback_policy !== undefined)
-    flowPatch.fallback_policy = body.fallback_policy
+    flowPatch.fallback_policy = stringifyConfig(body.fallback_policy)
 
   try {
     await databases.updateDocument(DATABASE_ID, COLLECTIONS.flows, id, flowPatch)
@@ -129,7 +139,7 @@ export async function PUT(
               flow_id: id,
               node_key: n.node_key,
               node_type: n.node_type,
-              config: n.config,
+              config: stringifyConfig(n.config),
               position_x: n.position_x ?? 0,
               position_y: n.position_y ?? 0,
             }
@@ -149,7 +159,17 @@ export async function PUT(
       Query.orderAsc('created_at'),
     ]),
   ])
-  return NextResponse.json({ flow, nodes: nodesResult.documents ?? [] })
+  return NextResponse.json({
+    flow: {
+      ...flow,
+      trigger_config: parseConfig(flow.trigger_config, {}),
+      fallback_policy: parseConfig(flow.fallback_policy, {}),
+    },
+    nodes: (nodesResult.documents ?? []).map((n: any) => ({
+      ...n,
+      config: parseConfig(n.config, {}),
+    })),
+  })
 }
 
 export async function DELETE(

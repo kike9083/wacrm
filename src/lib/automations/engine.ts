@@ -18,6 +18,7 @@ import { createAdminClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
 import { engineSendText, engineSendTemplate } from './meta-send'
+import { parseConfig, stringifyConfig } from '@/lib/appwrite/json-attr'
 
 // ------------------------------------------------------------
 // Public API
@@ -140,7 +141,7 @@ async function executeAutomation(automation: Automation, input: DispatchInput) {
         user_id: automation.user_id,
         contact_id: input.contactId ?? null,
         trigger_event: input.triggerType,
-        steps_executed: [],
+        steps_executed: stringifyConfig([]),
         status: 'success',
       }
     )
@@ -211,8 +212,12 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
   let errorMessage: string | null = null
 
   for (const step of steps as unknown as AutomationStep[]) {
-    if (step.step_type === 'wait') {
-      const cfg = step.step_config as WaitStepConfig
+    const parsedStep = {
+      ...step,
+      step_config: parseConfig(step.step_config, {}),
+    }
+    if (parsedStep.step_type === 'wait') {
+      const cfg = parsedStep.step_config as WaitStepConfig
       const ms = waitMs(cfg)
       await databases.createDocument(
         DATABASE_ID,
@@ -226,7 +231,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
           parent_step_id: args.parentStepId,
           branch: args.branch,
           next_step_position: step.position + 1,
-          context: args.context,
+          context: stringifyConfig(args.context),
           run_at: new Date(Date.now() + ms).toISOString(),
           status: 'pending',
         }
@@ -243,11 +248,11 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
     }
 
     try {
-      if (step.step_type === 'condition') {
-        const cfg = step.step_config as ConditionStepConfig
+      if (parsedStep.step_type === 'condition') {
+        const cfg = parsedStep.step_config as ConditionStepConfig
         const taken = await evaluateCondition(cfg, args)
         results.push({
-          step_id: step.id,
+          step_id: parsedStep.id,
           step_type: 'condition',
           status: 'success',
           detail: `branch=${taken ? 'yes' : 'no'}`,
@@ -256,7 +261,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         // own ordering within the branch scope).
         await executeStepsFrom({
           ...args,
-          parentStepId: step.id,
+          parentStepId: parsedStep.id,
           branch: taken ? 'yes' : 'no',
           startPosition: 0,
           logId: args.logId,
@@ -264,18 +269,18 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         continue
       }
 
-      const detail = await runStep(step, args)
+      const detail = await runStep(parsedStep, args)
       results.push({
-        step_id: step.id,
-        step_type: step.step_type,
+        step_id: parsedStep.id,
+        step_type: parsedStep.step_type,
         status: 'success',
         detail,
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       results.push({
-        step_id: step.id,
-        step_type: step.step_type,
+        step_id: parsedStep.id,
+        step_type: parsedStep.step_type,
         status: 'failed',
         detail: msg,
       })
@@ -295,6 +300,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
 
 async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string> {
   const { databases } = createAdminClient()
+  step = { ...step, step_config: parseConfig(step.step_config, {}) }
 
   switch (step.step_type) {
     case 'send_message': {
@@ -543,7 +549,10 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
 
 function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {
   if (automation.trigger_type !== 'keyword_match') return true
-  const cfg = automation.trigger_config as KeywordMatchTriggerConfig
+  const cfg = parseConfig(
+    automation.trigger_config,
+    {},
+  ) as KeywordMatchTriggerConfig
   if (!cfg?.keywords || cfg.keywords.length === 0) return false
   const text = (ctx?.message_text ?? '').toString()
   if (!text) return false
@@ -629,9 +638,9 @@ async function appendResults(
   const { databases } = createAdminClient()
   try {
     const log = await databases.getDocument(DATABASE_ID, COLLECTIONS.automationLogs, logId)
-    const existingSteps = (log as any).steps_executed as AutomationLogStepResult[] | undefined
-    const merged = [...(existingSteps ?? []), ...newItems]
-    const update: Record<string, unknown> = { steps_executed: merged }
+    const existingSteps = parseConfig(log.steps_executed, []) as AutomationLogStepResult[]
+    const merged = [...existingSteps, ...newItems]
+    const update: Record<string, unknown> = { steps_executed: stringifyConfig(merged) }
     if (status !== null) update.status = status
     if (errorMessage) update.error_message = errorMessage
     await databases.updateDocument(DATABASE_ID, COLLECTIONS.automationLogs, logId, update)

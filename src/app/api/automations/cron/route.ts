@@ -4,6 +4,7 @@ import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { Query } from 'node-appwrite'
 import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
+import { parseConfig } from '@/lib/appwrite/json-attr'
 
 export async function GET(request: Request) {
   const expected = process.env.AUTOMATION_CRON_SECRET
@@ -58,7 +59,7 @@ export async function GET(request: Request) {
       parent_step_id: (row.parent_step_id as string | null) ?? null,
       branch: (row.branch as 'yes' | 'no' | null) ?? null,
       next_step_position: row.next_step_position as number,
-      context: (row.context as AutomationContext) ?? {},
+      context: parseConfig(row.context, {}) as AutomationContext,
     })
     processed++
   }

@@ -11,6 +11,7 @@ import {
   validateStepsForActivation,
   validateTriggerForActivation,
 } from '@/lib/automations/validate'
+import { parseConfig, stringifyConfig } from '@/lib/appwrite/json-attr'
 
 async function requireUser() {
   const { account } = await createSessionClient()
@@ -41,7 +42,13 @@ export async function GET(
   }
 
   const steps = await loadStepsTree(id)
-  return NextResponse.json({ automation, steps })
+  return NextResponse.json({
+    automation: {
+      ...automation,
+      trigger_config: parseConfig(automation.trigger_config, {}),
+    },
+    steps,
+  })
 }
 
 export async function PATCH(
@@ -75,14 +82,20 @@ export async function PATCH(
     'trigger_config',
     'is_active',
   ] as const) {
-    if (k in body) update[k] = body[k]
+    if (k in body) {
+      update[k] =
+        k === 'trigger_config' ? stringifyConfig(body[k]) : body[k]
+    }
   }
 
   const willBeActive =
     typeof update.is_active === 'boolean' ? update.is_active : existing.is_active
   if (willBeActive) {
     const mergedTriggerType = (update.trigger_type ?? existing.trigger_type) as string
-    const mergedTriggerConfig = update.trigger_config ?? existing.trigger_config
+    const mergedTriggerConfig =
+      body.trigger_config !== undefined
+        ? body.trigger_config
+        : parseConfig(existing.trigger_config, {})
     const mergedSteps = Array.isArray(body.steps)
       ? (body.steps as { step_type: string; step_config: Record<string, unknown> }[])
       : await loadStepsTree(id)

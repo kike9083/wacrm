@@ -35,6 +35,7 @@
 import { createAdminClient } from "@/lib/appwrite/server";
 import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
 import { ID, Query } from "node-appwrite";
+import { parseConfig, stringifyConfig } from "@/lib/appwrite/json-attr";
 import {
   engineSendInteractiveButtons,
   engineSendInteractiveList,
@@ -185,7 +186,13 @@ async function loadActiveRunForContact(
         Query.limit(1),
       ]
     );
-    return (result.documents[0] as unknown as FlowRunRow) ?? null;
+    return (result.documents[0]
+      ? {
+          ...(result.documents[0] as unknown as FlowRunRow),
+          vars: parseConfig(result.documents[0].vars, {}) as FlowRunRow["vars"],
+          reprompt_count: (result.documents[0] as any).reprompt_count ?? 0,
+        }
+      : null) as FlowRunRow | null;
   } catch (err) {
     console.error("[flows] loadActiveRunForContact error:", err instanceof Error ? err.message : err);
     return null;
@@ -198,7 +205,10 @@ async function loadFlow(
   const { databases } = createAdminClient();
   try {
     const flow = await databases.getDocument(DATABASE_ID, COLLECTIONS.flows, flowId);
-    return flow as unknown as FlowRow;
+    return {
+      ...(flow as unknown as FlowRow),
+      trigger_config: parseConfig(flow.trigger_config, {}),
+    };
   } catch (err) {
     console.error("[flows] loadFlow error:", err instanceof Error ? err.message : err);
     return null;
@@ -217,7 +227,10 @@ async function loadAllNodes(
     );
     const map = new Map<string, FlowNodeRow>();
     for (const row of result.documents as unknown as FlowNodeRow[]) {
-      map.set(row.node_key, row);
+      map.set(row.node_key, {
+        ...row,
+        config: parseConfig(row.config, {}),
+      });
     }
     return map;
   } catch (err) {
@@ -247,7 +260,7 @@ async function logEvent(
       DATABASE_ID,
       COLLECTIONS.flowRunEvents,
       ID.unique(),
-      { flow_run_id: flowRunId, event_type, node_key, payload }
+      { flow_run_id: flowRunId, event_type, node_key, payload: stringifyConfig(payload) }
     );
   } catch (err) {
     console.error("[flows] logEvent error:", err instanceof Error ? err.message : err);
@@ -280,7 +293,12 @@ async function isDuplicateInbound(
         Query.equal("event_type", "reply_received"),
       ]
     );
-    return eventsResult.documents.some((e) => (e as any).payload?.meta_message_id === metaMessageId);
+    return eventsResult.documents.some((e) => {
+      const payload = parseConfig((e as any).payload, {}) as {
+        meta_message_id?: string
+      };
+      return payload?.meta_message_id === metaMessageId;
+    });
   } catch {
     return false;
   }
@@ -304,7 +322,10 @@ async function findEntryFlow(
         Query.orderAsc("created_at"),
       ]
     );
-    const flows = result.documents as unknown as FlowRow[];
+    const flows = (result.documents as unknown as FlowRow[]).map((f) => ({
+      ...f,
+      trigger_config: parseConfig(f.trigger_config, {}),
+    }));
     for (const flow of flows) {
       if (flow.trigger_type === "keyword") {
         if (matchesKeywordTrigger(message.text, flow.trigger_config as KeywordTriggerConfig)) {
@@ -843,7 +864,7 @@ async function handleReplyForActiveRun(
       const { databases } = createAdminClient();
       try {
         await databases.updateDocument(DATABASE_ID, COLLECTIONS.flowRuns, run.id, {
-          vars: newVars,
+          vars: stringifyConfig(newVars),
           reprompt_count: 0,
         });
         run.vars = newVars;

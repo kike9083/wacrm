@@ -3,6 +3,7 @@ import { createAdminClient, createSessionClient } from '@/lib/appwrite/server'
 import { DATABASE_ID, COLLECTIONS } from '@/lib/appwrite/db'
 import { ID, Query } from 'node-appwrite'
 import { getFlowTemplate } from '@/lib/flows/templates'
+import { stringifyConfig } from '@/lib/appwrite/json-attr'
 
 async function requireUserId(): Promise<string | null> {
   const { account } = await createSessionClient()
@@ -70,7 +71,7 @@ export async function POST(request: Request) {
           description: template.description,
           status: 'draft',
           trigger_type: template.trigger_type,
-          trigger_config: template.trigger_config,
+          trigger_config: stringifyConfig(template.trigger_config),
           entry_node_id: template.entry_node_id,
         }
       )
@@ -89,7 +90,7 @@ export async function POST(request: Request) {
               flow_id: flow.$id,
               node_key: n.node_key,
               node_type: n.node_type,
-              config: n.config,
+              config: stringifyConfig(n.config),
             }
           )
         }
@@ -118,7 +119,7 @@ export async function POST(request: Request) {
         description: body.description ?? null,
         status: 'draft',
         trigger_type,
-        trigger_config: body.trigger_config ?? {},
+        trigger_config: stringifyConfig(body.trigger_config),
       }
     )
     return NextResponse.json({ flow }, { status: 201 })
