@@ -108,6 +108,12 @@ export function wahaMessageToMeta(
     case 'audio':
       base.audio = { id, mime_type: media?.mimetype || 'audio/ogg' }
       return base
+    case 'ptt':
+      // Voice notes arrive from WAHA WEBJS as `ptt` (push-to-talk), not
+      // `audio`. Normalize to audio so the pipeline renders the player.
+      base.type = 'audio'
+      base.audio = { id, mime_type: media?.mimetype || 'audio/ogg' }
+      return base
     case 'sticker':
       base.sticker = { id, mime_type: media?.mimetype || 'image/webp' }
       return base
