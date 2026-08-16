@@ -109,7 +109,11 @@ export function ContactDetailView({
         databases.listDocuments(DATABASE_ID, COLLECTIONS.contactTags, [Query.equal('contact_id', contactId)]),
       ]);
 
-      setAllTags(tagsRes.documents as unknown as Tag[]);
+      setAllTags(
+        (tagsRes.documents as unknown as Array<Tag & { $id: string }>).map(
+          (d) => ({ ...d, id: d.$id })
+        )
+      );
       setContactTagIds(contactTagsRes.documents.map((ct: any) => ct.tag_id));
     } catch {
       setAllTags([]);

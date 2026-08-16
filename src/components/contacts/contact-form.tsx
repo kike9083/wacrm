@@ -68,7 +68,12 @@ export function ContactForm({
         COLLECTIONS.tags,
         [Query.orderAsc('name')]
       );
-      setTags(documents as unknown as Tag[]);
+      setTags(
+        (documents as unknown as Array<Tag & { $id: string }>).map((d) => ({
+          ...d,
+          id: d.$id,
+        }))
+      );
     } catch {
       setTags([]);
     }

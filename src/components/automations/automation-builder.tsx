@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -375,13 +375,9 @@ function TriggerCard({
               />
             )}
             {type === "tag_added" && (
-              <Input
-                placeholder="Tag id"
+              <TagSelect
                 value={(config.tag_id as string) ?? ""}
-                onChange={(e) =>
-                  onConfigChange({ ...config, tag_id: e.target.value })
-                }
-                className="bg-slate-800 text-white"
+                onChange={(v) => onConfigChange({ ...config, tag_id: v })}
               />
             )}
             {type === "time_based" && (
@@ -744,11 +740,10 @@ function StepEditor({
     case "add_tag":
     case "remove_tag":
       return (
-        <FieldBlock label="Tag id">
-          <Input
+        <FieldBlock label="Tag">
+          <TagSelect
             value={(cfg.tag_id as string) ?? ""}
-            onChange={(e) => set({ tag_id: e.target.value })}
-            className="bg-slate-800 text-white"
+            onChange={(v) => set({ tag_id: v })}
           />
         </FieldBlock>
       )
@@ -942,6 +937,69 @@ function FieldBlock({
       <label className="mb-1 block text-xs font-medium text-slate-400">{label}</label>
       {children}
     </div>
+  )
+}
+
+function TagSelect({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const [tags, setTags] = useState<{ id: string; name: string }[]>([])
+  const [fallback, setFallback] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch("/api/tags").catch(() => null)
+        if (!res || !res.ok) {
+          if (!cancelled) setFallback(true)
+          return
+        }
+        const json = (await res.json()) as {
+          tags?: { $id: string; name: string }[]
+        }
+        if (!cancelled) {
+          setTags(
+            (json.tags ?? []).map((t) => ({ id: t.$id, name: t.name })),
+          )
+        }
+      } catch {
+        if (!cancelled) setFallback(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (fallback || tags.length === 0) {
+    return (
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Tag UUID"
+        className="bg-slate-800 font-mono text-xs"
+      />
+    )
+  }
+
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-sm text-white focus:border-primary focus:outline-none"
+    >
+      <option value="">— none —</option>
+      {tags.map((t) => (
+        <option key={t.id} value={t.id}>
+          {t.name}
+        </option>
+      ))}
+    </select>
   )
 }
 

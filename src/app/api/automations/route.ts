@@ -22,7 +22,7 @@ export async function GET() {
   const { documents } = await databases.listDocuments(
     DATABASE_ID,
     COLLECTIONS.automations,
-    [Query.orderDesc('created_at')]
+    [Query.equal('user_id', user.$id), Query.orderDesc('created_at')]
   )
   return NextResponse.json({ automations: documents })
 }
