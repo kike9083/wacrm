@@ -125,29 +125,33 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   }
 
   return (
-    <div className="group relative">
-      <img
-        src={src ?? ""}
-        alt={alt}
-        className="max-h-64 max-w-60 rounded-lg object-cover"
-        onError={() => setError(true)}
-      />
-      <div className="absolute inset-0 hidden items-center justify-center gap-2 rounded-lg bg-black/40 group-hover:flex">
+    <div>
+      <a href={url} target="_blank" rel="noopener noreferrer">
+        <img
+          src={src ?? ""}
+          alt={alt}
+          className="max-h-64 max-w-60 rounded-lg object-cover transition hover:opacity-90"
+          onError={() => setError(true)}
+        />
+      </a>
+      <div className="mt-1 flex gap-1">
         <a
           href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="rounded-full bg-slate-900/80 p-2 text-white transition hover:bg-slate-800"
+          className="flex items-center gap-1 rounded-md bg-slate-700/60 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
           title="Open image"
         >
-          <ExternalLink className="h-4 w-4" />
+          <ExternalLink className="h-3.5 w-3.5" />
+          Open
         </a>
         <button
           onClick={handleDownload}
-          className="rounded-full bg-slate-900/80 p-2 text-white transition hover:bg-slate-800"
+          className="flex items-center gap-1 rounded-md bg-slate-700/60 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
           title="Download image"
         >
-          <Download className="h-4 w-4" />
+          <Download className="h-3.5 w-3.5" />
+          Download
         </button>
       </div>
     </div>
