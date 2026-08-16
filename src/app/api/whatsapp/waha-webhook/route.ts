@@ -113,6 +113,16 @@ export async function POST(request: Request) {
   switch (event) {
     case 'message': {
       if (isFromMe(body)) break // our own sends were already persisted
+      // TEMP DEBUG: capture raw media-message shapes to fix adapter mapping
+      if (payload.type !== 'chat' && payload.type !== 'text') {
+        console.warn('[waha-webhook] media payload:', JSON.stringify({
+          type: payload.type,
+          hasMedia: payload.hasMedia,
+          body: typeof payload.body === 'string' ? payload.body.slice(0, 30) : payload.body,
+          media: payload.media,
+          mimetype: payload.mimetype,
+        }))
+      }
       const message = wahaMessageToMeta(payload)
       if (message) {
         processMessagesForConfig(config, [message], [wahaMessageToContact(payload)])
