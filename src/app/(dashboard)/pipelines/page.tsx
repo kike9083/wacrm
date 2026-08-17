@@ -67,9 +67,12 @@ export default function PipelinesPage() {
       const { documents } = await databases.listDocuments(
         DATABASE_ID,
         COLLECTIONS.pipelines,
-        [Query.orderAsc("created_at")]
+        [Query.orderAsc("$createdAt")]
       );
-      return (documents ?? []) as unknown as Pipeline[];
+      return (documents ?? []).map((d) => ({
+        ...d,
+        id: d.$id,
+      })) as unknown as Pipeline[];
     } catch (error) {
       console.error("Failed to load pipelines:", error);
       return [];
@@ -84,7 +87,10 @@ export default function PipelinesPage() {
           COLLECTIONS.pipelineStages,
           [Query.equal("pipeline_id", pipelineId), Query.orderAsc("position")]
         );
-        return (documents ?? []) as unknown as PipelineStage[];
+        return (documents ?? []).map((d) => ({
+          ...d,
+          id: d.$id,
+        })) as unknown as PipelineStage[];
       } catch {
         return [];
       }
@@ -98,9 +104,12 @@ export default function PipelinesPage() {
         const { documents } = await databases.listDocuments(
           DATABASE_ID,
           COLLECTIONS.deals,
-          [Query.equal("pipeline_id", pipelineId), Query.orderDesc("created_at")]
+          [Query.equal("pipeline_id", pipelineId), Query.orderDesc("$createdAt")]
         );
-        return (documents ?? []) as unknown as Deal[];
+        return (documents ?? []).map((d) => ({
+          ...d,
+          id: d.$id,
+        })) as unknown as Deal[];
       } catch {
         return [];
       }
