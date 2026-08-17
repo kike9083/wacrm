@@ -459,7 +459,9 @@ async function executeHandoff(
         // Handoff always pauses AI auto-reply so the UI flips to the
         // "AI paused" banner instead of still replying automatically.
         ai_autoreply_disabled: true,
-        ...(cfg.note ? { ai_handoff_summary: cfg.note } : {}),
+        ...(cfg.note
+          ? { ai_handoff_summary: interpolateVars(cfg.note, run.vars) }
+          : {}),
         ...(assignee ? { assigned_agent_id: assignee } : {}),
       });
     } catch {
@@ -897,6 +899,28 @@ async function handleReplyForActiveRun(
           captured_key: cfg.var_key,
           captured_length: captured.length,
         });
+        // Persist captured lead data onto the contact so it shows up
+        // in the contacts UI, not only inside flow_runs.vars.
+        if (["name", "email", "phone", "company"].includes(cfg.var_key)) {
+          try {
+            await databases.updateDocument(
+              DATABASE_ID,
+              COLLECTIONS.contacts,
+              run.contact_id!,
+              { [cfg.var_key]: captured },
+            );
+            if (cfg.var_key === "name" && run.conversation_id) {
+              await databases.updateDocument(
+                DATABASE_ID,
+                COLLECTIONS.conversations,
+                run.conversation_id,
+                { contact_name: captured },
+              );
+            }
+          } catch {
+            // contact/conversation missing — vars are still captured
+          }
+        }
         matched = cfg.next_node_key;
       } catch {
         // capture failed
