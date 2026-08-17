@@ -61,6 +61,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { databases } from "@/lib/appwrite/client";
+import { DATABASE_ID, COLLECTIONS } from "@/lib/appwrite/db";
+import { Query } from "appwrite";
 import {
   validateFlowForActivation,
   type ValidationIssue,
@@ -1194,12 +1197,18 @@ function NodeConfigForm({
       )}
 
       {node.node_type === "handoff" && (
-        <TextRow
-          label="Internal note (for the agent picking up)"
-          value={(cfg as { note?: string }).note ?? ""}
-          onChange={(v) => onUpdateConfig({ note: v })}
-          rows={2}
-        />
+        <>
+          <HandoffAgentRow
+            value={(cfg as { assign_to?: string }).assign_to ?? ""}
+            onChange={(v) => onUpdateConfig({ assign_to: v })}
+          />
+          <TextRow
+            label="Internal note (for the agent picking up)"
+            value={(cfg as { note?: string }).note ?? ""}
+            onChange={(v) => onUpdateConfig({ note: v })}
+            rows={2}
+          />
+        </>
       )}
 
       {node.node_type === "end" && (
@@ -1921,6 +1930,72 @@ function TextRow({
           className="bg-slate-800"
         />
       )}
+    </div>
+  );
+}
+
+function HandoffAgentRow({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [profiles, setProfiles] = useState<
+    Array<{ id: string; user_id: string; full_name: string }>
+  >([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await databases.listDocuments(
+          DATABASE_ID,
+          COLLECTIONS.profiles,
+          [Query.orderAsc("full_name")]
+        );
+        if (cancelled) return;
+        setProfiles(
+          response.documents.map((d) => ({
+            id: d.$id,
+            user_id: d.user_id as string,
+            full_name: (d.full_name as string) ?? "",
+          }))
+        );
+      } catch {
+        // non-fatal — the row just shows "no agents available"
+      } finally {
+        setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div>
+      <label className="mb-1 block text-xs text-slate-400">
+        Assign to agent (optional — defaults to the account owner)
+      </label>
+      <Select
+        value={value || "__unassigned__"}
+        onValueChange={(v) => onChange(v && v !== "__unassigned__" ? v : "")}
+      >
+        <SelectTrigger className="bg-slate-800">
+          <SelectValue placeholder="Pick an agent…" />
+        </SelectTrigger>
+        <SelectContent className="border-slate-700 bg-slate-800">
+          <SelectItem value="__unassigned__">No specific agent</SelectItem>
+          {loaded &&
+            profiles.map((p) => (
+              <SelectItem key={p.id} value={p.user_id}>
+                {p.full_name || p.user_id.slice(0, 8)}
+              </SelectItem>
+            ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

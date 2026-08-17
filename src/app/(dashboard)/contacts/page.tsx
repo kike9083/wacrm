@@ -193,6 +193,27 @@ export default function ContactsPage() {
     setDeleting(true);
 
     try {
+      // Cascade: remove conversations, their messages, and flow runs
+      // linked to this contact so no orphaned "Unknown" chats survive
+      // in the inbox after the contact is gone.
+      const convRes = await databases.listDocuments(DATABASE_ID, COLLECTIONS.conversations, [
+        Query.equal('contact_id', deleteTarget.id),
+      ]);
+      for (const conv of convRes.documents) {
+        const msgRes = await databases.listDocuments(DATABASE_ID, COLLECTIONS.messages, [
+          Query.equal('conversation_id', conv.$id),
+        ]);
+        for (const msg of msgRes.documents) {
+          await databases.deleteDocument(DATABASE_ID, COLLECTIONS.messages, msg.$id);
+        }
+        await databases.deleteDocument(DATABASE_ID, COLLECTIONS.conversations, conv.$id);
+      }
+      const runsRes = await databases.listDocuments(DATABASE_ID, COLLECTIONS.flowRuns, [
+        Query.equal('contact_id', deleteTarget.id),
+      ]);
+      for (const run of runsRes.documents) {
+        await databases.deleteDocument(DATABASE_ID, COLLECTIONS.flowRuns, run.$id);
+      }
       await databases.deleteDocument(DATABASE_ID, COLLECTIONS.contacts, deleteTarget.id);
       toast.success(t('contacts.deleteContact'));
       fetchContacts();

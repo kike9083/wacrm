@@ -436,11 +436,31 @@ async function executeHandoff(
   const cfg = node.config as { assign_to?: string; note?: string };
   const { databases } = createAdminClient();
   if (run.conversation_id) {
+    // When the node has no explicit assign_to, fall back to the
+    // contact's owner (the account that owns the WhatsApp number) so
+    // the conversation always surfaces an assigned agent.
+    let assignee = cfg.assign_to ?? null;
+    if (!assignee && run.contact_id) {
+      try {
+        const contact = await databases.getDocument(
+          DATABASE_ID,
+          COLLECTIONS.contacts,
+          run.contact_id
+        );
+        assignee = (contact as { user_id?: string }).user_id ?? null;
+      } catch {
+        // contact gone — leave unassigned
+      }
+    }
     try {
       await databases.updateDocument(DATABASE_ID, COLLECTIONS.conversations, run.conversation_id, {
         status: "pending",
         updated_at: new Date().toISOString(),
-        ...(cfg.assign_to ? { assigned_agent_id: cfg.assign_to } : {}),
+        // Handoff always pauses AI auto-reply so the UI flips to the
+        // "AI paused" banner instead of still replying automatically.
+        ai_autoreply_disabled: true,
+        ...(cfg.note ? { ai_handoff_summary: cfg.note } : {}),
+        ...(assignee ? { assigned_agent_id: assignee } : {}),
       });
     } catch {
       // ignore
