@@ -110,6 +110,62 @@ export function matchesKeywordTrigger(
   return false;
 }
 
+/**
+ * After a `collect_input` captures the customer's name, create a deal
+ * in the user's first pipeline (first stage) so the lead appears in
+ * the pipeline as "New lead - <name>" instead of the first message.
+ * Skips when the user has no pipeline or an open deal already exists
+ * for this contact in that pipeline.
+ */
+async function ensureDealFromCapturedLead(
+  run: FlowRunRow,
+  capturedName: string,
+): Promise<void> {
+  const { databases } = createAdminClient();
+  try {
+    const pipelines = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTIONS.pipelines,
+      [Query.equal("user_id", run.user_id), Query.limit(1)],
+    );
+    const pipeline = pipelines.documents[0];
+    if (!pipeline) return;
+    const stages = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTIONS.pipelineStages,
+      [
+        Query.equal("pipeline_id", pipeline.$id),
+        Query.orderAsc("position"),
+        Query.limit(1),
+      ],
+    );
+    const stage = stages.documents[0];
+    if (!stage) return;
+    const existing = await databases.listDocuments(
+      DATABASE_ID,
+      COLLECTIONS.deals,
+      [
+        Query.equal("contact_id", run.contact_id!),
+        Query.equal("pipeline_id", pipeline.$id),
+        Query.equal("status", "open"),
+        Query.limit(1),
+      ],
+    );
+    if (existing.documents.length > 0) return;
+    await databases.createDocument(DATABASE_ID, COLLECTIONS.deals, ID.unique(), {
+      user_id: run.user_id,
+      pipeline_id: pipeline.$id,
+      stage_id: stage.$id,
+      contact_id: run.contact_id,
+      title: `New lead - ${capturedName}`,
+      value: 0,
+      status: "open",
+    });
+  } catch {
+    // pipeline missing or write failed — deal creation is best-effort
+  }
+}
+
 /** Nodes that advance to a next_node_key without waiting for input. */
 export function isAutoAdvancing(node_type: string): boolean {
   return (
@@ -916,6 +972,9 @@ async function handleReplyForActiveRun(
                 run.conversation_id,
                 { contact_name: captured },
               );
+            }
+            if (cfg.var_key === "name") {
+              await ensureDealFromCapturedLead(run, captured);
             }
           } catch {
             // contact/conversation missing — vars are still captured

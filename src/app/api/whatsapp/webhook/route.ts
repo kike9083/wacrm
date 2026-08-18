@@ -965,8 +965,16 @@ async function findOrCreateContact(
   const existingContact = contactsResult.documents.find((c: ContactRow) => phonesMatch(c.phone, phone))
 
   if (existingContact) {
-    // Update name if it changed
-    if (name && name !== existingContact.name) {
+    // Update name only when the incoming profile name looks like a real
+    // name. WAHA reports the phone number as `profile.name` when the
+    // contact has no display name — never overwrite a captured lead
+    // name (set by the flows runner) with the phone number.
+    const incomingIsPhoneLike = !name || /^\+?[\d\s()-]{7,}$/.test(name)
+    const shouldUpdateName =
+      name &&
+      !incomingIsPhoneLike &&
+      name !== existingContact.name
+    if (shouldUpdateName) {
       try {
         await adminDb().updateDocument(
           DATABASE_ID,
