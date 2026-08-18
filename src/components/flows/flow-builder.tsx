@@ -1660,8 +1660,13 @@ function ConditionForm({
       try {
         const res = await fetch("/api/tags").catch(() => null);
         if (!res || !res.ok) return;
-        const json = (await res.json()) as { tags?: UserTag[] };
-        if (!cancelled) setTags(json.tags ?? []);
+        const json = (await res.json()) as {
+          tags?: { $id: string; name: string; color?: string }[];
+        };
+        if (!cancelled)
+          setTags(
+            (json.tags ?? []).map((t) => ({ id: t.$id, name: t.name, color: t.color }))
+          );
       } catch {
         // Tags endpoint absent on older deployments — fall back to a
         // plain text input so the condition is still authorable.
@@ -1830,8 +1835,13 @@ function SetTagForm({
       try {
         const res = await fetch("/api/tags").catch(() => null);
         if (!res || !res.ok) return;
-        const json = (await res.json()) as { tags?: UserTag[] };
-        if (!cancelled) setTags(json.tags ?? []);
+        const json = (await res.json()) as {
+          tags?: { $id: string; name: string; color?: string }[];
+        };
+        if (!cancelled)
+          setTags(
+            (json.tags ?? []).map((t) => ({ id: t.$id, name: t.name, color: t.color }))
+          );
       } catch {
         // No tags endpoint — fall back to raw UUID input.
       }
