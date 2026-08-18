@@ -114,8 +114,12 @@ export function DealForm({
         databases.listDocuments(DATABASE_ID, COLLECTIONS.profiles, [Query.orderAsc("full_name")]),
       ]);
       if (cancelled) return;
-      setContacts((c.documents ?? []) as unknown as Contact[]);
-      setProfiles((p.documents ?? []) as unknown as Profile[]);
+      setContacts(
+        (c.documents ?? []).map((d) => ({ ...d, id: d.$id })) as unknown as Contact[]
+      );
+      setProfiles(
+        (p.documents ?? []).map((d) => ({ ...d, id: d.$id })) as unknown as Profile[]
+      );
     })();
     return () => {
       cancelled = true;
